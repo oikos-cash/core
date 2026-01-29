@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import { NomaFactory } from "../src/factory/NomaFactory.sol";
+import { OikosFactory } from "../src/factory/OikosFactory.sol";
 import { TestResolver } from "./resolver/Resolver.sol";
 import { DeployerFactory } from "../src/factory/DeployerFactory.sol";
 import { ExtFactory } from "../src/factory/ExtFactory.sol";
@@ -18,6 +18,9 @@ import {
     VaultUpgradeStep5
 } from "../src/vault/init/VaultUpgrade.sol";
 import { VaultFinalize } from "../src/vault/init/VaultFinalize.sol";
+import { ExtVaultShift } from "../src/vault/ExtVaultShift.sol";
+import { ExtVaultLending } from "../src/vault/ExtVaultLending.sol";
+import { ExtVaultLiquidation } from "../src/vault/ExtVaultLiquidation.sol";
 import {
     VaultDeployParams,
     PresaleUserParams,
@@ -44,10 +47,10 @@ interface IAuxVault {
     function setManager(address manager) external;
 }
 
-/// @notice Mock WETH/WMON token for testing
-contract MockWMON {
-    string public name = "Wrapped MON";
-    string public symbol = "WMON";
+/// @notice Mock WETH/WBNB token for testing
+contract MockWBNB {
+    string public name = "Wrapped BNB";
+    string public symbol = "WBNB";
     uint8 public decimals = 18;
 
     mapping(address => uint256) public balanceOf;
@@ -103,23 +106,23 @@ contract PrivilegedParametersTest is Test {
     address user = address(0xBEEF);
     address multisig;
 
-    NomaFactory nomaFactory;
+    OikosFactory nomaFactory;
     TestResolver resolver;
     EtchVault etchVault;
     VaultUpgrade vaultUpgrade;
     ModelHelper modelHelper;
     AdaptiveSupply adaptiveSupply;
     TokenFactory tokenFactory;
-    MockWMON mockWMON;
+    MockWBNB mockWBNB;
 
     // Mainnet addresses
-    address constant UNISWAP_FACTORY_MAINNET = 0x204FAca1764B154221e35c0d20aBb3c525710498;
+    address constant UNISWAP_FACTORY_MAINNET = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
     address constant PANCAKESWAP_FACTORY_MAINNET = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
     // Testnet addresses
     address constant UNISWAP_FACTORY_TESTNET = 0x961235a9020B05C44DF1026D956D1F4D78014276;
     address constant PANCAKESWAP_FACTORY_TESTNET = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
-    // Select based on environment (WMON will be set to mock in setUp)
-    address WMON;
+    // Select based on environment (WBNB will be set to mock in setUp)
+    address WBNB;
     address private uniswapFactory;
     address private pancakeSwapFactory;
 
@@ -135,9 +138,9 @@ contract PrivilegedParametersTest is Test {
 
         vm.prank(deployer);
 
-        // Mock WMON - use mock for local testing
-        mockWMON = new MockWMON();
-        WMON = address(mockWMON);
+        // Mock WBNB - use mock for local testing
+        mockWBNB = new MockWBNB();
+        WBNB = address(mockWBNB);
 
         // Model Helper
         modelHelper = new ModelHelper();
@@ -180,8 +183,8 @@ contract PrivilegedParametersTest is Test {
         ExtFactory extFactory = new ExtFactory(address(resolver));
 
         vm.prank(deployer);
-        // Noma Factory
-        nomaFactory = new NomaFactory(
+        // Oikos Factory
+        nomaFactory = new OikosFactory(
             uniswapFactory,
             pancakeSwapFactory,
             address(resolver),
@@ -196,12 +199,24 @@ contract PrivilegedParametersTest is Test {
         nomaFactory.setMultiSigAddress(multisig);
 
         expectedAddressesInResolver.push(
-            ContractInfo("NomaFactory", address(nomaFactory))
+            ContractInfo("OikosFactory", address(nomaFactory))
         );
 
         vm.prank(deployer);
         etchVault = new EtchVault(address(nomaFactory), address(resolver));
-        vaultUpgrade = new VaultUpgrade(deployer, address(nomaFactory));
+
+        // Deploy facets first (pre-deployed pattern to stay under 24KB limit)
+        ExtVaultShift facetShift = new ExtVaultShift();
+        ExtVaultLending facetLending = new ExtVaultLending();
+        ExtVaultLiquidation facetLiquidation = new ExtVaultLiquidation();
+
+        vaultUpgrade = new VaultUpgrade(
+            deployer,
+            address(nomaFactory),
+            address(facetShift),
+            address(facetLending),
+            address(facetLiquidation)
+        );
 
         // VaultStep1 adds BaseVault (used by preDeployVault)
         VaultInit vaultStep1 = new VaultInit(deployer, address(nomaFactory));
@@ -247,7 +262,7 @@ contract PrivilegedParametersTest is Test {
         );
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
 
         vm.prank(deployer);
@@ -275,7 +290,10 @@ contract PrivilegedParametersTest is Test {
             0.5e18,     // Adaptive supply curve half step (halfStep)
             2,          // Skim ratio
             Decimals(6, 18), // Decimals (minDecimals, maxDecimals)
-            1e14        // basePriceDecimals
+            1e14,       // basePriceDecimals
+            5,          // reservedBalanceThreshold (%)
+            120,        // twapPeriod (2 minutes)
+            200         // maxTwapDeviation (200 ticks ~2%)
         );
 
         vm.prank(deployer);
@@ -311,7 +329,7 @@ contract PrivilegedParametersTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,
             true,
@@ -330,7 +348,8 @@ contract PrivilegedParametersTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
 

@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../src/interfaces/IVault.sol";
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
-import {NomaToken} from "../src/token/NomaToken.sol";
+import {OikosToken} from "../src/token/OikosToken.sol";
 import {ModelHelper} from "../src/model/Helper.sol";
 import {BaseVault} from "../src/vault/BaseVault.sol";
 import {GonsToken} from "../src/token/Gons.sol";
@@ -28,7 +28,7 @@ interface IDOManager {
     function modelHelper() external view returns (address);
 }
 
-interface INomaFactory {
+interface IOikosFactory {
     function teamMultiSig() external view returns (address);
     function owner() external view returns (address);
 }
@@ -58,7 +58,7 @@ contract ERC20RecoveryTest is Test {
     using stdJson for string;
 
     IVault vault;
-    IERC20 token0; // NOMA token
+    IERC20 token0; // OKS token
     IERC20 token1; // WETH
 
     uint256 MAX_INT = type(uint256).max;
@@ -67,15 +67,15 @@ contract ERC20RecoveryTest is Test {
     address deployer = vm.envAddress("DEPLOYER");
     bool isMainnet = vm.envOr("DEPLOY_FLAG_MAINNET", false);
 
-    NomaToken private noma;
+    OikosToken private noma;
     ModelHelper private modelHelper;
 
     // Mainnet addresses
-    address constant WMON_MAINNET = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
+    address constant WBNB_MAINNET = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     // Testnet addresses
-    address constant WMON_TESTNET = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
+    address constant WBNB_TESTNET = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     // Select based on environment
-    address WMON;
+    address WBNB;
     address payable idoManager;
     address nomaToken;
     address modelHelperContract;
@@ -91,8 +91,8 @@ contract ERC20RecoveryTest is Test {
     MockERC20 randomToken3;
 
     function setUp() public {
-        // Set WMON based on mainnet/testnet flag
-        WMON = isMainnet ? WMON_MAINNET : WMON_TESTNET;
+        // Set WBNB based on mainnet/testnet flag
+        WBNB = isMainnet ? WBNB_MAINNET : WBNB_TESTNET;
 
         string memory root = vm.projectRoot();
         string memory path = string.concat(root, "/deploy_helper/out/out.json");
@@ -105,7 +105,7 @@ contract ERC20RecoveryTest is Test {
         factoryAddress = vm.parseJsonAddress(json, string.concat(".", networkId, ".Factory"));
 
         IDOManager managerContract = IDOManager(idoManager);
-        noma = NomaToken(nomaToken);
+        noma = OikosToken(nomaToken);
         modelHelper = ModelHelper(modelHelperContract);
         vaultAddress = address(managerContract.vault());
 
@@ -116,13 +116,13 @@ contract ERC20RecoveryTest is Test {
         token1 = IERC20(pool.token1());
 
         // Get team multisig (required for recovery operations)
-        teamMultiSig = INomaFactory(factoryAddress).teamMultiSig();
+        teamMultiSig = IOikosFactory(factoryAddress).teamMultiSig();
 
         // Get staking contract address
         stakingContract = IStakingVault(vaultAddress).getStakingContract();
 
         console.log("Vault address:", vaultAddress);
-        console.log("Token0 (NOMA):", address(token0));
+        console.log("Token0 (OKS):", address(token0));
         console.log("Token1 (WETH):", address(token1));
         console.log("Factory:", factoryAddress);
         console.log("Team MultiSig:", teamMultiSig);
@@ -138,8 +138,8 @@ contract ERC20RecoveryTest is Test {
             _setupStaking();
         } else {
             // Get Gons contract from staking
-            gonsContract = address(Staking(stakingContract).sNOMA());
-            console.log("Gons Contract (sNOMA):", gonsContract);
+            gonsContract = address(Staking(stakingContract).sOKS());
+            console.log("Gons Contract (sOKS):", gonsContract);
         }
     }
 
@@ -322,27 +322,27 @@ contract ERC20RecoveryTest is Test {
         assertEq(randomToken1.balanceOf(stakingContract), amountToSend, "Tokens should remain in staking");
     }
 
-    /// @notice Test that cannot recover NOMA from Staking
-    function testRecoverERC20_CannotRecoverNOMA() public {
+    /// @notice Test that cannot recover OKS from Staking
+    function testRecoverERC20_CannotRecoverOKS() public {
         if (stakingContract == address(0)) {
             console.log("Staking not set up, skipping test");
             return;
         }
 
-        // Try to recover NOMA to multisig - should revert (NOMA is protected)
+        // Try to recover OKS to multisig - should revert (OKS is protected)
         vm.prank(teamMultiSig);
         vm.expectRevert();
         IAuxVault(vaultAddress).recoverERC20(address(token0), teamMultiSig);
     }
 
-    /// @notice Test that cannot recover sNOMA from Staking
-    function testRecoverERC20_CannotRecoverSNOMA() public {
+    /// @notice Test that cannot recover sOKS from Staking
+    function testRecoverERC20_CannotRecoverSOKS() public {
         if (stakingContract == address(0) || gonsContract == address(0)) {
             console.log("Staking/Gons not set up, skipping test");
             return;
         }
 
-        // Try to recover sNOMA to multisig - should revert (sNOMA is protected)
+        // Try to recover sOKS to multisig - should revert (sOKS is protected)
         vm.prank(teamMultiSig);
         vm.expectRevert();
         IAuxVault(vaultAddress).recoverERC20(gonsContract, teamMultiSig);
@@ -357,12 +357,12 @@ contract ERC20RecoveryTest is Test {
             return;
         }
 
-        // Step 1: Buy NOMA tokens
+        // Step 1: Buy OKS tokens
         _buyTokens(10 ether);
 
         uint256 nomaBalance = token0.balanceOf(address(this));
-        console.log("NOMA balance after buy:", nomaBalance);
-        assertGt(nomaBalance, 0, "Should have NOMA after buying");
+        console.log("OKS balance after buy:", nomaBalance);
+        assertGt(nomaBalance, 0, "Should have OKS after buying");
 
         // Step 2: Check if staking is enabled
         bool stakingEnabled = IStakingVault(vaultAddress).stakingEnabled();
@@ -492,8 +492,8 @@ contract ERC20RecoveryTest is Test {
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
         uint256 purchasePrice = spotPrice + (spotPrice * 25 / 100);
 
-        IWETH(WMON).deposit{value: wethAmount}();
-        IWETH(WMON).transfer(idoManager, wethAmount);
+        IWETH(WBNB).deposit{value: wethAmount}();
+        IWETH(WBNB).transfer(idoManager, wethAmount);
 
         managerContract.buyTokens(purchasePrice, wethAmount, 0, address(this));
     }

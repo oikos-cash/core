@@ -22,7 +22,7 @@ interface IVault {
     function extraFunction() external;
 }
 
-interface INomaFactory {
+interface IOikosFactory {
     function owner() external view returns (address);
     function setVaultOwnership(address vaultAddress, address newOwner) external;
 }
@@ -86,11 +86,11 @@ contract TestVaultUpgrade is Test {
 
         if (currentOwner == factoryAddress) {
             // Factory owns the vault, use factory's authority to transfer
-            address factoryAuthority = INomaFactory(factoryAddress).owner();
+            address factoryAuthority = IOikosFactory(factoryAddress).owner();
             console.log("Factory authority:", factoryAuthority);
 
             vm.prank(factoryAuthority);
-            INomaFactory(factoryAddress).setVaultOwnership(vaultAddress, deployer);
+            IOikosFactory(factoryAddress).setVaultOwnership(vaultAddress, deployer);
 
             require(IDiamond(vaultAddress).owner() == deployer, "Failed to transfer ownership to deployer");
             console.log("Ownership transferred to deployer");
@@ -145,12 +145,12 @@ contract TestVaultUpgrade is Test {
 
         if (currentOwner == factoryAddress) {
             // Get factory authority
-            address factoryAuthority = INomaFactory(factoryAddress).owner();
+            address factoryAuthority = IOikosFactory(factoryAddress).owner();
             console.log("Factory authority:", factoryAuthority);
 
             // Transfer ownership via factory
             vm.prank(factoryAuthority);
-            INomaFactory(factoryAddress).setVaultOwnership(vaultAddress, deployer);
+            IOikosFactory(factoryAddress).setVaultOwnership(vaultAddress, deployer);
 
             // Verify ownership transferred
             assertEq(IDiamond(vaultAddress).owner(), deployer, "Ownership should transfer to deployer");
@@ -167,7 +167,7 @@ contract TestVaultUpgrade is Test {
 
             vm.prank(unauthorizedUser);
             vm.expectRevert(); // NotAuthorityError
-            INomaFactory(factoryAddress).setVaultOwnership(vaultAddress, unauthorizedUser);
+            IOikosFactory(factoryAddress).setVaultOwnership(vaultAddress, unauthorizedUser);
         } else {
             // If not factory-owned, test direct transfer rejection
             address unauthorizedUser = address(0x123456);
@@ -245,14 +245,14 @@ contract TestVaultUpgrade is Test {
         address currentOwner = IDiamond(vaultAddress).owner();
 
         if (currentOwner == factoryAddress) {
-            address factoryAuthority = INomaFactory(factoryAddress).owner();
+            address factoryAuthority = IOikosFactory(factoryAddress).owner();
 
             // Factory transfers ownership to upgrade contract, then back
             // This simulates what the factory's doUpgrade function does
             vm.startPrank(factoryAuthority);
 
             // Transfer ownership to a new address temporarily
-            INomaFactory(factoryAddress).setVaultOwnership(vaultAddress, deployer);
+            IOikosFactory(factoryAddress).setVaultOwnership(vaultAddress, deployer);
 
             vm.stopPrank();
 

@@ -1,23 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// ███╗   ██╗ ██████╗ ███╗   ███╗ █████╗                               
-// ████╗  ██║██╔═══██╗████╗ ████║██╔══██╗                              
-// ██╔██╗ ██║██║   ██║██╔████╔██║███████║                              
-// ██║╚██╗██║██║   ██║██║╚██╔╝██║██╔══██║                              
-// ██║ ╚████║╚██████╔╝██║ ╚═╝ ██║██║  ██║                              
-// ╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝                              
-                                                                    
-// ██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗     
-// ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║     
-// ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗
-// ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
+//  ██████╗ ██╗██╗  ██╗ ██████╗ ███████╗
+// ██╔═══██╗██║██║ ██╔╝██╔═══██╗██╔════╝
+// ██║   ██║██║█████╔╝ ██║   ██║███████╗
+// ██║   ██║██║██╔═██╗ ██║   ██║╚════██║
+// ╚██████╔╝██║██║  ██╗╚██████╔╝███████║
+//  ╚═════╝ ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+                                     
+
 //
 // Contract: ExchangeHelper.sol
-// Author: 0xsufi@noma.money
-// Copyright Noma Protocol 2024/2026
+//                                  
+// Copyright Oikos Protocol 2024/2026
 import { TickMath } from "v3-core/libraries/TickMath.sol";
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
 import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
@@ -42,7 +37,7 @@ interface IWETH {
     function balanceOf(address owner) external returns (uint256);
 }
 
-interface INomaFactory {
+interface IOikosFactory {
     function getVaultFromPool(address pool) external view returns (address);
 }
 
@@ -60,18 +55,18 @@ contract ExchangeHelper {
     // TokenInfo state variable
     TokenInfo public tokenInfo;
 
-    address public WMON = address(0);
-    address public nomaFactory = address(0);
+    address public WBNB = address(0);
+    address public oikosFactory = address(0);
 
     // Lock state variable to prevent reentrancy
     bool private locked;
 
     constructor(
-        address nomaFactoryAddress, 
+        address oikosFactoryAddress, 
         address wrappedMonAddress
     ) {
-        nomaFactory = nomaFactoryAddress;
-        WMON = wrappedMonAddress;
+        oikosFactory = oikosFactoryAddress;
+        WBNB = wrappedMonAddress;
     }
 
     function buyTokens(
@@ -98,11 +93,11 @@ contract ExchangeHelper {
         });
         uint8 decimals = IERC20Metadata(tokenInfo.token0).decimals();
 
-        // --- Record the initial WMON balance to avoid refunding extra ---
-        uint256 initialWETHBalance = IWETH(WMON).balanceOf(address(this));
+        // --- Record the initial WBNB balance to avoid refunding extra ---
+        uint256 initialWETHBalance = IWETH(WBNB).balanceOf(address(this));
 
-        // Deposit MON into WMON (this increases the balance by msg.value)
-        IWETH(WMON).deposit{value: msg.value}();
+        // Deposit MON into WBNB (this increases the balance by msg.value)
+        IWETH(WBNB).deposit{value: msg.value}();
 
         // Swap Params
         SwapParams memory swapParams = SwapParams({
@@ -124,7 +119,7 @@ contract ExchangeHelper {
             minAmountOut: minAmount
         });
         
-        // Perform the swap using the newly deposited WMON
+        // Perform the swap using the newly deposited WBNB
         (int256 amount0, int256 amount1) = Uniswap
         .swap(
             swapParams
@@ -135,11 +130,11 @@ contract ExchangeHelper {
             revert NoToken0Received();
         }
 
-        uint256 refundAmount = IWETH(WMON).balanceOf(address(this)) - initialWETHBalance;
+        uint256 refundAmount = IWETH(WBNB).balanceOf(address(this)) - initialWETHBalance;
         
         if (refundAmount > 0) {
-            // Withdraw the excess WMON into MON
-            IWETH(WMON).withdraw(refundAmount);
+            // Withdraw the excess WBNB into MON
+            IWETH(WBNB).withdraw(refundAmount);
             // Refund the caller with the excess MON
             payable(receiver).transfer(refundAmount);
         }
@@ -197,7 +192,7 @@ contract ExchangeHelper {
             minAmountOut: minAmount
         });
         
-        // Perform the swap using the newly deposited WMON
+        // Perform the swap using the newly deposited WBNB
         (int256 amount0, int256 amount1) = Uniswap
         .swap(
             swapParams
@@ -330,7 +325,7 @@ contract ExchangeHelper {
         if (amount1 >= 0) revert InvalidSwap();
 
         uint256 ethReceived = uint256(-amount1);
-        IWETH(WMON).withdraw(ethReceived);
+        IWETH(WBNB).withdraw(ethReceived);
         payable(receiver).transfer(ethReceived);
 
         // track referrals if a code is provided
@@ -343,7 +338,7 @@ contract ExchangeHelper {
 
     // Function to record referral usage
     function _trackReferralVolume(address poolAddress, bytes8 code, int256 amount) internal {
-        address vault = INomaFactory(nomaFactory).getVaultFromPool(poolAddress);
+        address vault = IOikosFactory(oikosFactory).getVaultFromPool(poolAddress);
         if (vault != address(0)) {
             IVault(vault).setReferralEntity(code, uint256(SignedMath.abs(amount)));
         }
@@ -357,7 +352,7 @@ contract ExchangeHelper {
         int256 amount1Delta, 
         bytes calldata data
     ) external {
-        address vault = INomaFactory(nomaFactory).getVaultFromPool(msg.sender);
+        address vault = IOikosFactory(oikosFactory).getVaultFromPool(msg.sender);
         if (vault == address(0)) {
             revert InvalidSwap();
         }
@@ -383,7 +378,7 @@ contract ExchangeHelper {
         int256 amount1Delta, 
         bytes calldata data
     ) external {
-        address vault = INomaFactory(nomaFactory).getVaultFromPool(msg.sender);
+        address vault = IOikosFactory(oikosFactory).getVaultFromPool(msg.sender);
         if (vault == address(0)) {
             revert InvalidSwap();
         }

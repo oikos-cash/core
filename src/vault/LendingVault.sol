@@ -55,8 +55,9 @@ contract LendingVault {
     ) internal view returns (uint256 fees) {
         // [H-05 FIX] Avoid precision loss by multiplying before dividing
         // Previous code lost precision for loans < 1 day (daysElapsed = 0)
+        // [AUDIT FIX] Use protocolParameters.loanFee to allow updates via setProtocolParametersCreator()
         uint256 SECONDS_IN_DAY = 86_400;
-        fees = (borrowAmount * _v.loanFee * duration) / (SECONDS_IN_DAY * 100_000);
+        fees = (borrowAmount * _v.protocolParameters.loanFee * duration) / (SECONDS_IN_DAY * 100_000);
     }
     /**
      * @notice Allows a user to borrow tokens from the vault's floor liquidity.
@@ -160,6 +161,8 @@ contract LendingVault {
     function rollLoan(address who, uint256 newDuration) public onlyInternalCalls 
     returns (uint256 newBorrowAmount) {
         if (_v.timeLastMinted == 0) revert NotPermitted();
+        if (who == Utils.BLACKLISTED) revert NotPermitted();
+
         // Fetch the loan position
         LoanPosition storage loan = _v.loanPositions[who];
 
@@ -171,8 +174,8 @@ contract LendingVault {
         // Check if the loan has expired
         if (block.timestamp > loan.expiry) revert LoanExpired();
 
-        // Ensure the new duration is valid
-        if (newDuration == 0 || newDuration > 30 days) revert InvalidDuration();
+        // Ensure the new duration is valid (minimum 30 days, same as borrowFromFloor)
+        if (newDuration < 30 days || newDuration > 365 days) revert InvalidDuration();
 
         // Recalculate the collateral value
         uint256 newCollateralValue = DecimalMath.multiplyDecimal(
@@ -184,23 +187,23 @@ contract LendingVault {
         if (newCollateralValue <= loan.borrowAmount) revert CantRollLoan();
 
         // Calculate the new borrow amount and fees
-        newBorrowAmount = newCollateralValue - loan.borrowAmount;
+        newBorrowAmount = (newCollateralValue - loan.borrowAmount) / 4;
 
         // Calculate the new fees
         uint256 newFees = _calculateLoanFees(newBorrowAmount, currentDuration + newDuration);
 
-        // Update the loan's expiry to reflect the new duration 
-        loan.expiry = loan.expiry + newDuration;
-        loan.duration = currentDuration + newDuration;
-        loan.borrowAmount = loan.borrowAmount + newBorrowAmount;
-        
         _fetchFromLiquidity(newBorrowAmount, true);
 
         // Transfer the new borrow amount (minus fees) to the borrower
-        IERC20(_v.pool.token1()).transfer(who, newBorrowAmount - newFees);     
+        IERC20(_v.pool.token1()).transfer(who, newBorrowAmount - newFees);
+
+        // Update the loan's expiry to reflect the new duration (after transfer for CEI pattern)
+        loan.expiry = loan.expiry + newDuration;
+        loan.duration = currentDuration + newDuration;
+        loan.borrowAmount = loan.borrowAmount + newBorrowAmount;
 
         // Update the vault's liquidity positions
-        _updatePositions([_v.floorPosition, _v.anchorPosition, _v.discoveryPosition]);             
+        _updatePositions([_v.floorPosition, _v.anchorPosition, _v.discoveryPosition]);
     }
 
     function addCollateral(address who, uint256 amount) public onlyInternalCalls {
@@ -226,8 +229,11 @@ contract LendingVault {
         if (amount <= 0) revert InvalidParams();
 
         if (remove) {
-            if (amount > floorToken1Balance * _v.protocolParameters.maxLoanUtilization / 100) revert InvalidParams();
+            uint256 minRemaining =
+                floorToken1Balance * (100 - _v.protocolParameters.maxLoanUtilization) / 100;
+
             if (floorToken1Balance < amount) revert InsufficientFloorBalance();
+            if (floorToken1Balance - amount < minRemaining) revert InvalidParams();
         }
 
         LiquidityPosition[3] memory positions = [_v.floorPosition, _v.anchorPosition, _v.discoveryPosition];
@@ -245,6 +251,8 @@ contract LendingVault {
             ), 
             positions
         );        
+
+        // IModelHelper(modelHelper()).enforceSolvencyInvariant(address(this));
     }
 
     /**
@@ -367,8 +375,8 @@ contract LendingVault {
      * @notice Modifier to restrict access to internal calls.
      */
     modifier onlyInternalCalls() {
-        if (msg.sender != _v.factory && msg.sender != address(this)) revert OnlyInternalCalls();
-        _;        
+        if (msg.sender != IVault(address(this)).factory() && msg.sender != address(this)) revert OnlyInternalCalls();
+        _;
     }
 
     /**

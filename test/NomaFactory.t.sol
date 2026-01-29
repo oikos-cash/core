@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import { NomaFactory } from "../src/factory/NomaFactory.sol";
+import { OikosFactory } from "../src/factory/OikosFactory.sol";
 import { TestResolver } from "./resolver/Resolver.sol";
 import { DeployerFactory } from "../src/factory/DeployerFactory.sol";
 import { ExtFactory } from "../src/factory/ExtFactory.sol";
@@ -21,6 +21,9 @@ import {
 } from "../src/vault/init/VaultUpgrade.sol";
 
 import { VaultFinalize } from "../src/vault/init/VaultFinalize.sol";
+import { ExtVaultShift } from "../src/vault/ExtVaultShift.sol";
+import { ExtVaultLending } from "../src/vault/ExtVaultLending.sol";
+import { ExtVaultLiquidation } from "../src/vault/ExtVaultLiquidation.sol";
 
 import {
     VaultDeployParams,
@@ -63,10 +66,10 @@ contract SupplyRulesHarness {
     }
 }
 
-/// @notice Mock WETH/WMON token for testing
-contract MockWMON {
-    string public name = "Wrapped MON";
-    string public symbol = "WMON";
+/// @notice Mock WETH/WBNB token for testing
+contract MockWBNB {
+    string public name = "Wrapped BNB";
+    string public symbol = "WBNB";
     uint8 public decimals = 18;
 
     mapping(address => uint256) public balanceOf;
@@ -101,13 +104,13 @@ contract MockWMON {
     }
 }
 
-contract NomaFactoryTest is Test {
+contract OikosFactoryTest is Test {
     uint256 privateKey = vm.envUint("PRIVATE_KEY");
     address deployer = vm.envAddress("DEPLOYER");
     bool isMainnet = vm.envOr("DEPLOY_FLAG_MAINNET", false);
     address user = address(2);
 
-    NomaFactory nomaFactory;
+    OikosFactory nomaFactory;
     TestResolver resolver;
     EtchVault etchVault;
     VaultUpgrade vaultUpgrade;
@@ -115,28 +118,28 @@ contract NomaFactoryTest is Test {
     AdaptiveSupply adaptiveSupply;
     TokenFactory tokenFactory;
     SupplyRulesHarness supplyRulesHarness;
-    MockWMON mockWMON;
+    MockWBNB mockWBNB;
 
     // Mainnet addresses
-    address constant WMON_MAINNET = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
-    address constant UNISWAP_FACTORY_MAINNET = 0x204FAca1764B154221e35c0d20aBb3c525710498;
+    address constant WBNB_MAINNET = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
+    address constant UNISWAP_FACTORY_MAINNET = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
     address constant PANCAKESWAP_FACTORY_MAINNET = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
     // Testnet addresses
-    address constant WMON_TESTNET = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
+    address constant WBNB_TESTNET = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     address constant UNISWAP_FACTORY_TESTNET = 0x961235a9020B05C44DF1026D956D1F4D78014276;
     address constant PANCAKESWAP_FACTORY_TESTNET = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
     // Select based on environment
-    address WMON;
+    address WBNB;
     address uniswapFactory;
     address pancakeSwapFactory;
     // For SupplyRules integration tests, we use a mock
-    address testWMON;
+    address testWBNB;
 
     ContractInfo[] private expectedAddressesInResolver;
 
     function setUp() public {
         // Set addresses based on mainnet/testnet flag
-        WMON = isMainnet ? WMON_MAINNET : WMON_TESTNET;
+        WBNB = isMainnet ? WBNB_MAINNET : WBNB_TESTNET;
         uniswapFactory = isMainnet ? UNISWAP_FACTORY_MAINNET : UNISWAP_FACTORY_TESTNET;
         pancakeSwapFactory = isMainnet ? PANCAKESWAP_FACTORY_MAINNET : PANCAKESWAP_FACTORY_TESTNET;
 
@@ -145,9 +148,9 @@ contract NomaFactoryTest is Test {
         // SupplyRules Harness for testing reverts
         supplyRulesHarness = new SupplyRulesHarness();
 
-        // Mock WMON for SupplyRules integration tests
-        mockWMON = new MockWMON();
-        testWMON = address(mockWMON);
+        // Mock WBNB for SupplyRules integration tests
+        mockWBNB = new MockWBNB();
+        testWBNB = address(mockWBNB);
 
         // Model Helper
         modelHelper = new ModelHelper();
@@ -190,8 +193,8 @@ contract NomaFactoryTest is Test {
         ExtFactory extFactory = new ExtFactory(address(resolver));
 
         vm.prank(deployer);
-        // Noma Factory
-        nomaFactory = new NomaFactory(
+        // Oikos Factory
+        nomaFactory = new OikosFactory(
             uniswapFactory,
             pancakeSwapFactory, 
             address(resolver),
@@ -201,12 +204,24 @@ contract NomaFactoryTest is Test {
         );
 
         expectedAddressesInResolver.push(
-            ContractInfo("NomaFactory", address(nomaFactory))
+            ContractInfo("OikosFactory", address(nomaFactory))
         );
         
         vm.prank(deployer);
         etchVault = new EtchVault(address(nomaFactory), address(resolver));
-        vaultUpgrade = new VaultUpgrade(deployer, address(nomaFactory));
+
+        // Deploy facets first (pre-deployed pattern to stay under 24KB limit)
+        ExtVaultShift facetShift = new ExtVaultShift();
+        ExtVaultLending facetLending = new ExtVaultLending();
+        ExtVaultLiquidation facetLiquidation = new ExtVaultLiquidation();
+
+        vaultUpgrade = new VaultUpgrade(
+            deployer,
+            address(nomaFactory),
+            address(facetShift),
+            address(facetLending),
+            address(facetLiquidation)
+        );
 
         // VaultStep1 adds BaseVault (used by preDeployVault during deployVault)
         VaultInit vaultStep1 = new VaultInit(deployer, address(nomaFactory));
@@ -277,9 +292,12 @@ contract NomaFactoryTest is Test {
             25e16,      // presalePremium (25%)
             1_250,      // self repaying loan ltv treshold
             0.5e18,     // Adaptive supply curve half step
-            2,          // Skim ratio  
-            Decimals(6, 18), // Decimals (minDecimals, maxDecimals      
-            1e14        // basePriceDecimals
+            2,          // Skim ratio
+            Decimals(6, 18), // Decimals (minDecimals, maxDecimals)
+            1e14,       // basePriceDecimals
+            5,          // reservedBalanceThreshold (%)
+            120,        // twapPeriod (2 minutes)
+            200         // maxTwapDeviation (200 ticks ~2%)
         );
 
         vm.prank(deployer);
@@ -289,14 +307,14 @@ contract NomaFactoryTest is Test {
     function testCreateVaultShouldRevert() public {
         VaultDeployParams memory vaultDeployParams = 
             VaultDeployParams(
-                "Noma Token", // Name
-                "NOMA",       // Symbol
+                "Oikos Token", // Name
+                "OKS",       // Symbol
                 18,           // Decimals
                 100_000_000_000_000e18,       // Total supply
                 200_000_000_000_000e18,       // Max supply
                 1e18,         // IDO Price
                 0,
-                WMON,          // Token1 address
+                WBNB,          // Token1 address
                 3000,         // Uniswap V3 Fee tier
                 0,            // Presale
                 true,         // Is fresh deploy
@@ -320,7 +338,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
 
@@ -330,7 +349,7 @@ contract NomaFactoryTest is Test {
     function testCreateVaultShouldSucceed() public {
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
 
         vm.prank(deployer);
@@ -338,14 +357,14 @@ contract NomaFactoryTest is Test {
 
         VaultDeployParams memory vaultDeployParams = 
         VaultDeployParams(
-            "Noma Token", // Name
-            "NOMA2",       // Symbol
+            "Oikos Token", // Name
+            "OKS2",       // Symbol
             18,           // Decimals
             100_000_000_000_000e18,       // Total supply
             200_000_000_000_000e18,       // Max supply
             1e18,         // IDO Price
             0,
-            WMON,         // Token1 address
+            WBNB,         // Token1 address
             3000,         // Uniswap V3 Fee tier
             0,            // Presale
             true,         // Is fresh deploy
@@ -366,7 +385,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
         
@@ -377,21 +397,21 @@ contract NomaFactoryTest is Test {
     function testCreateDuplicateVault() public {
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
 
         configureResolver();    
 
         VaultDeployParams memory vaultDeployParams = 
         VaultDeployParams(
-            "Noma Token", // Name
-            "NOMA",       // Symbol
+            "Oikos Token", // Name
+            "OKS",       // Symbol
             18,           // Decimals
             100_000_000e18,       // Total supply
             200e18,       // Max supply
             1e18,         // IDO Price
             0,
-            WMON,         // Token1 address
+            WBNB,         // Token1 address
             3000,         // Uniswap V3 Fee tier
             0,            // Presale
             true,         // Is fresh deploy
@@ -412,7 +432,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
 
@@ -422,14 +443,14 @@ contract NomaFactoryTest is Test {
 
         // vaultDeployParams = 
         // VaultDeployParams(
-        //     "Noma Token", // Name
-        //     "NOMA",       // Symbol
+        //     "Oikos Token", // Name
+        //     "OKS",       // Symbol
         //     18,           // Decimals
         //     100e18,       // Total supply
         //     200e18,       // Max supply
         //     1e18,         // IDO Price
         //     0,
-        //     WMON,         // Token1 address
+        //     WBNB,         // Token1 address
         //     3000,         // Uniswap V3 Fee tier
         //     0,            // Presale
         //     true,         // Is fresh deploy
@@ -471,10 +492,13 @@ contract NomaFactoryTest is Test {
             0.01e18,    // deployFee (ETH)
             25e16,      // presalePremium (25%)
             1_250,      // self repaying loan ltv treshold
-            0.5e18,     // Adaptive supply curve half step       
-            2,          // Skim ratio 
-            Decimals(6, 18), // Decimals (minDecimals, maxDecimals
-            1e14        // basePriceDecimals
+            0.5e18,     // Adaptive supply curve half step
+            2,          // Skim ratio
+            Decimals(6, 18), // Decimals (minDecimals, maxDecimals)
+            1e14,       // basePriceDecimals
+            5,          // reservedBalanceThreshold (%)
+            120,        // twapPeriod (2 minutes)
+            200         // maxTwapDeviation (200 ticks ~2%)
         );
 
         vm.prank(deployer);
@@ -494,7 +518,7 @@ contract NomaFactoryTest is Test {
     function testPermissionlessDeployNotEnabled() public {
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
 
         vm.prank(deployer);
@@ -504,14 +528,14 @@ contract NomaFactoryTest is Test {
 
         VaultDeployParams memory vaultDeployParams = 
         VaultDeployParams(
-            "Noma Token", // Name
-            "NOMA2",       // Symbol
+            "Oikos Token", // Name
+            "OKS2",       // Symbol
             18,           // Decimals
             100_000_000_000e18,       // Total supply
             200_000_000_000e18,       // Max supply
             1e18,         // IDO Price
             0,
-            WMON,         // Token1 address
+            WBNB,         // Token1 address
             3000,         // Uniswap V3 Fee tier
             0,            // Presale
             true,         // Is fresh deploy
@@ -532,7 +556,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
     }
@@ -540,21 +565,21 @@ contract NomaFactoryTest is Test {
     function testPermissionlessDeployEnabled() public {
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
 
         configureResolver();    
 
         VaultDeployParams memory vaultDeployParams = 
         VaultDeployParams(
-            "Noma Token", // Name
-            "NOMA2",       // Symbol
+            "Oikos Token", // Name
+            "OKS2",       // Symbol
             18,           // Decimals
             100_000_000_000e18,       // Total supply
             200_000_000_000e18,       // Max supply
             1e18,         // IDO Price
             0,
-            WMON,         // Token1 address
+            WBNB,         // Token1 address
             3000,         // Uniswap V3 Fee tier
             0,            // Presale
             true,         // Is fresh deploy
@@ -576,28 +601,29 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
     }
 
     function testEnumerateVaults() public {
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
 
         configureResolver();    
 
         VaultDeployParams memory vaultDeployParams = 
         VaultDeployParams(
-            "Noma Token", // Name
-            "NOMA",       // Symbol
+            "Oikos Token", // Name
+            "OKS",       // Symbol
             18,           // Decimals
             100_000_000e18,       // Total supply
             200_000_000e18,       // Max supply
             1e18,         // IDO Price
             0,
-            WMON,         // Token1 address
+            WBNB,         // Token1 address
             3000,         // Uniswap V3 Fee tier
             0,            // Presale
             true,         // Is fresh deploy
@@ -620,7 +646,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
         // Check deployers
@@ -635,7 +662,7 @@ contract NomaFactoryTest is Test {
         assertEq(deployersList.length, 1);
         assertEq(vaultDesc.deployer, deployersList[0]);
         assertEq(deployersList[0], deployer);
-        assertEq(vaultDesc.token1, WMON);
+        assertEq(vaultDesc.token1, WBNB);
 
         vaultDeployParams = 
         VaultDeployParams(
@@ -646,7 +673,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,       // Max supply
             1e18,         // IDO Price
             0,
-            WMON,         // Token1 address
+            WBNB,         // Token1 address
             3000,         // Uniswap V3 Fee tier
             0,            // Presale
             true,         // Is fresh deploy
@@ -661,7 +688,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
 
@@ -677,14 +705,14 @@ contract NomaFactoryTest is Test {
         assertEq(deployersList.length, 2);
         assertEq(vaultDesc.deployer, deployersList[1]);
         assertEq(deployersList[1], user);
-        assertEq(vaultDesc.token1, WMON);
+        assertEq(vaultDesc.token1, WBNB);
 
     }
 
     function testDeployerCanDeployMultipleVaults() public {
         // Prepare Resolver
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
         configureResolver();
 
@@ -697,7 +725,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,             // Max supply
             1e18,               // IDO Price
             0,
-            WMON,               // Token1 address
+            WBNB,               // Token1 address
             3000,               // Uniswap V3 Fee tier
             0,                  // Presale
             true,               // Is fresh deploy
@@ -714,7 +742,7 @@ contract NomaFactoryTest is Test {
             400_000_000e18,             // Max supply
             2e18,               // IDO Price
             0,
-            WMON,               // Token1 address
+            WBNB,               // Token1 address
             3000,               // Uniswap V3 Fee tier
             0,                  // Presale
             true,               // Is fresh deploy
@@ -739,7 +767,8 @@ contract NomaFactoryTest is Test {
             vault1Params,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
 
@@ -756,7 +785,8 @@ contract NomaFactoryTest is Test {
             vault2Params,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })            
         );
 
@@ -769,12 +799,12 @@ contract NomaFactoryTest is Test {
         // Validate Vault 1 details
         VaultDescription memory vault1Desc = nomaFactory.getVaultDescription(vaults[0]);
 
-        assertEq(vault1Desc.token1, WMON);
+        assertEq(vault1Desc.token1, WBNB);
 
         // Validate Vault 2 details
         VaultDescription memory vault2Desc = nomaFactory.getVaultDescription(vaults[1]);
 
-        assertEq(vault2Desc.token1, WMON);
+        assertEq(vault2Desc.token1, WBNB);
 
         // Validate deployers list
         address[] memory deployersList = nomaFactory.getDeployers();
@@ -1076,19 +1106,19 @@ contract NomaFactoryTest is Test {
         }
     }
 
-    // ========== NomaFactory Integration Tests for SupplyRules ==========
+    // ========== OikosFactory Integration Tests for SupplyRules ==========
 
-    /// @notice Helper to configure resolver with testWMON for SupplyRules tests
-    function configureResolverWithTestWMON() internal {
+    /// @notice Helper to configure resolver with testWBNB for SupplyRules tests
+    function configureResolverWithTestWBNB() internal {
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", testWMON)
+            ContractInfo("WBNB", testWBNB)
         );
         configureResolver();
     }
 
     /// @notice Test that deployVault reverts when supply is too low for price
     function testDeployVault_SupplyTooLowForPrice_Reverts() public {
-        configureResolverWithTestWMON();
+        configureResolverWithTestWBNB();
 
         // Price at t1 threshold (basePrice/10 = 1e13) needs 1B minimum
         VaultDeployParams memory vaultDeployParams = VaultDeployParams(
@@ -1099,7 +1129,7 @@ contract NomaFactoryTest is Test {
             2_000_000e18,      // Max supply
             1e13,              // Price at t1 threshold - requires 1B
             0,
-            testWMON,
+            testWBNB,
             3000,
             0,
             true,
@@ -1126,7 +1156,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
     }
@@ -1140,7 +1171,7 @@ contract NomaFactoryTest is Test {
             vm.skip(true);
         }
 
-        configureResolverWithTestWMON();
+        configureResolverWithTestWBNB();
 
         // High price (above basePrice 1e14) needs only 1M
         VaultDeployParams memory vaultDeployParams = VaultDeployParams(
@@ -1151,7 +1182,7 @@ contract NomaFactoryTest is Test {
             2_000_000e18,      // Max supply
             1e15,              // Price > basePrice (1e14) - requires only 1M
             0,
-            testWMON,
+            testWBNB,
             3000,
             0,
             true,
@@ -1169,7 +1200,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
 
@@ -1185,7 +1217,7 @@ contract NomaFactoryTest is Test {
             vm.skip(true);
         }
 
-        configureResolverWithTestWMON();
+        configureResolverWithTestWBNB();
 
         // Price between t1 and t0 (1e13 < price <= 1e14) needs 10M
         VaultDeployParams memory vaultDeployParams = VaultDeployParams(
@@ -1196,7 +1228,7 @@ contract NomaFactoryTest is Test {
             20_000_000e18,     // Max supply
             5e13,              // Price in tier 1 range - requires 10M
             0,
-            testWMON,
+            testWBNB,
             3000,
             0,
             true,
@@ -1214,7 +1246,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
 
@@ -1223,7 +1256,7 @@ contract NomaFactoryTest is Test {
 
     /// @notice Test low price requires high supply
     function testDeployVault_LowPriceRequiresHighSupply() public {
-        configureResolverWithTestWMON();
+        configureResolverWithTestWBNB();
 
         // Very low price (below t7 = 1e7) needs 1000T
         VaultDeployParams memory vaultDeployParams = VaultDeployParams(
@@ -1234,7 +1267,7 @@ contract NomaFactoryTest is Test {
             200_000_000_000_000e18,
             1e6,                      // Price below t7 - requires 1000T
             0,
-            testWMON,
+            testWBNB,
             3000,
             0,
             true,
@@ -1261,14 +1294,15 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
     }
 
     /// @notice Test supply just below minimum reverts in factory
     function testDeployVault_SupplyJustBelowMinimum_Reverts() public {
-        configureResolverWithTestWMON();
+        configureResolverWithTestWBNB();
 
         // Price above basePrice needs 1M, provide 1M - 1 wei
         VaultDeployParams memory vaultDeployParams = VaultDeployParams(
@@ -1279,7 +1313,7 @@ contract NomaFactoryTest is Test {
             2_000_000e18,
             1e15,               // Price > basePrice - requires 1M
             0,
-            testWMON,
+            testWBNB,
             3000,
             0,
             true,
@@ -1305,7 +1339,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
     }
@@ -1319,7 +1354,7 @@ contract NomaFactoryTest is Test {
             vm.skip(true);
         }
 
-        configureResolverWithTestWMON();
+        configureResolverWithTestWBNB();
 
         // Change basePrice to 1e16 (100x higher than default 1e14)
         ProtocolParameters memory newParams = nomaFactory.getProtocolParameters();
@@ -1339,7 +1374,7 @@ contract NomaFactoryTest is Test {
             2_000_000_000e18,
             1e15,              // Price == t1 with new basePrice - requires 1B
             0,
-            testWMON,
+            testWBNB,
             3000,
             0,
             true,
@@ -1357,7 +1392,8 @@ contract NomaFactoryTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
 
@@ -1377,7 +1413,7 @@ contract NomaFactoryTest is Test {
         }
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
         configureResolver();
 
@@ -1390,7 +1426,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,            // No presale
             true,         // isFreshDeploy = true
@@ -1408,7 +1444,8 @@ contract NomaFactoryTest is Test {
             freshDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
 
@@ -1418,7 +1455,7 @@ contract NomaFactoryTest is Test {
 
         // Step 2: Mint tokens to the factory before deploying with isFreshDeploy=false
         // The token allows the factory to mint, so vault1 (which is the minting authority via factory) can mint
-        // Actually, the NomaFactory.mintTokens() is called by vaults, so we need to use the vault
+        // Actually, the OikosFactory.mintTokens() is called by vaults, so we need to use the vault
         // For testing, we'll mint directly from vault1 to the factory
         vm.prank(vault1);
         nomaFactory.mintTokens(address(nomaFactory), 100_000_000e18);
@@ -1435,7 +1472,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,            // No presale
             false,        // isFreshDeploy = false - use existing token/pool
@@ -1448,7 +1485,8 @@ contract NomaFactoryTest is Test {
             existingDeployParams,
             ExistingDeployData({
                 pool: pool1,      // Use existing pool
-                token0: token1    // Use existing token
+                token0: token1,   // Use existing token
+                vaultAddress: address(0)
             })
         );
 
@@ -1463,14 +1501,14 @@ contract NomaFactoryTest is Test {
 
         assertEq(vaultDesc1.token0, token1, "Vault1 token0 should match");
         assertEq(vaultDesc2.token0, token1, "Vault2 token0 should match (same token)");
-        assertEq(vaultDesc1.token1, WMON, "Vault1 token1 should be WMON");
-        assertEq(vaultDesc2.token1, WMON, "Vault2 token1 should be WMON");
+        assertEq(vaultDesc1.token1, WBNB, "Vault1 token1 should be WBNB");
+        assertEq(vaultDesc2.token1, WBNB, "Vault2 token1 should be WBNB");
     }
 
     /// @notice Test that isFreshDeploy=false with zero addresses reverts or fails gracefully
     function testDeployVault_ExistingDeploy_ZeroAddresses() public {
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
         configureResolver();
 
@@ -1482,7 +1520,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,
             false,        // isFreshDeploy = false
@@ -1502,7 +1540,8 @@ contract NomaFactoryTest is Test {
             existingDeployParams,
             ExistingDeployData({
                 pool: address(0),   // Zero address - invalid
-                token0: address(0)  // Zero address - invalid
+                token0: address(0), // Zero address - invalid
+                vaultAddress: address(0)
             })
         );
     }
@@ -1516,7 +1555,7 @@ contract NomaFactoryTest is Test {
         }
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
         configureResolver();
 
@@ -1529,7 +1568,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,
             true,         // Fresh deploy first
@@ -1547,7 +1586,8 @@ contract NomaFactoryTest is Test {
             freshDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
 
@@ -1564,7 +1604,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,
             false,        // Use existing
@@ -1577,7 +1617,8 @@ contract NomaFactoryTest is Test {
             existingDeployParams,
             ExistingDeployData({
                 pool: pool1,
-                token0: token1
+                token0: token1,
+                vaultAddress: address(0)
             })
         );
 
@@ -1621,7 +1662,7 @@ contract NomaFactoryTest is Test {
         }
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
         configureResolver();
 
@@ -1634,7 +1675,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,
             true,
@@ -1652,7 +1693,8 @@ contract NomaFactoryTest is Test {
             freshDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
 
@@ -1673,7 +1715,7 @@ contract NomaFactoryTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,
+            WBNB,
             3000,
             0,
             false,
@@ -1686,7 +1728,8 @@ contract NomaFactoryTest is Test {
             existingDeployParams,
             ExistingDeployData({
                 pool: pool1,
-                token0: token1
+                token0: token1,
+                vaultAddress: address(0)
             })
         );
 

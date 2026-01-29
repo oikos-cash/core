@@ -36,7 +36,7 @@ contract BuyIDO is Script {
     address deployer = vm.envAddress("DEPLOYER");
 
     // Constants
-    address WMON = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
+    address WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address payable idoManager;
     address nomaToken;
     
@@ -52,7 +52,7 @@ contract BuyIDO is Script {
         // Read the JSON file
         string memory json = vm.readFile(path);
 
-        string memory networkId = "143";
+        string memory networkId = "56";
         // Parse the data for network ID `1337`
         bytes memory data = vm.parseJson(json, string.concat(string("."), networkId));
 
@@ -75,8 +75,8 @@ contract BuyIDO is Script {
         uint8 totalTrades = 15;
         uint256 tradeSize = 5 ether;
 
-        IWETH(WMON).deposit{ value: (totalTrades * tradeSize) }();
-        IWETH(WMON).transfer(address(idoManager), (totalTrades * tradeSize));
+        IWETH(WBNB).deposit{ value: (totalTrades * tradeSize) }();
+        IWETH(WBNB).transfer(address(idoManager), (totalTrades * tradeSize));
 
         uint256 tokenBalanceBefore = amphor.balanceOf(address(deployer));
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtRatioX96, 18);

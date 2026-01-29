@@ -7,7 +7,7 @@ import {stdJson} from "forge-std/StdJson.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../src/interfaces/IVault.sol";
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
-import {NomaToken} from  "../src/token/NomaToken.sol";
+import {OikosToken} from  "../src/token/OikosToken.sol";
 import {ModelHelper} from  "../src/model/Helper.sol";
 import {BaseVault} from  "../src/vault/BaseVault.sol";
 import {IVault} from  "../src/interfaces/IVault.sol";
@@ -51,23 +51,23 @@ contract LendingInvariants is Test {
     address deployer = vm.envAddress("DEPLOYER");
     bool isMainnet = vm.envOr("DEPLOY_FLAG_MAINNET", false);
 
-    NomaToken private noma;
+    OikosToken private noma;
     ModelHelper private modelHelper;
 
     // Mainnet addresses
-    address constant WMON_MAINNET = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
+    address constant WBNB_MAINNET = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     // Testnet addresses
-    address constant WMON_TESTNET = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
+    address constant WBNB_TESTNET = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     // Select based on environment
-    address WMON;
+    address WBNB;
     address payable idoManager;
     address nomaToken;
     address modelHelperContract;
     address vaultAddress;
 
     function setUp() public {
-        // Set WMON based on mainnet/testnet flag
-        WMON = isMainnet ? WMON_MAINNET : WMON_TESTNET;
+        // Set WBNB based on mainnet/testnet flag
+        WBNB = isMainnet ? WBNB_MAINNET : WBNB_TESTNET;
 
         // Define the file path
         string memory root = vm.projectRoot();
@@ -88,8 +88,8 @@ contract LendingInvariants is Test {
         IDOManager managerContract = IDOManager(idoManager);
         require(address(managerContract) != address(0), "Manager contract address is zero");
 
-        noma = NomaToken(nomaToken);
-        require(address(noma) != address(0), "Noma token address is zero");
+        noma = OikosToken(nomaToken);
+        require(address(noma) != address(0), "Oikos token address is zero");
         
         modelHelper = ModelHelper(modelHelperContract);
         vaultAddress = address(managerContract.vault());
@@ -204,8 +204,8 @@ contract LendingInvariants is Test {
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
         uint256 purchasePrice = spotPrice + (spotPrice * 5 / 100);
 
-        IWETH(WMON).deposit{ value: (tradeAmount * totalTrades)}();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{ value: (tradeAmount * totalTrades)}();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
         uint256 tokenBalanceBefore = noma.balanceOf(address(this));
         uint256 circulatingSupplyBefore = modelHelper.getCirculatingSupply(pool, address(vault), false);
@@ -239,13 +239,13 @@ contract LendingInvariants is Test {
 
         (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
-        uint256 purchasePrice = spotPrice + (spotPrice * 25 / 100);
+        uint256 purchasePrice = spotPrice + (spotPrice * 5 / 100);
 
-        uint16 totalTrades = 10;
-        uint256 tradeAmount = 20000 ether;
+        uint16 totalTrades = 3000;
+        uint256 tradeAmount = 100 ether;
 
-        IWETH(WMON).deposit{ value: (tradeAmount * totalTrades)}();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{ value: (tradeAmount * totalTrades)}();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
         uint256 tokenBalanceBefore = noma.balanceOf(address(this));
         uint256 circulatingSupplyBefore = modelHelper.getCirculatingSupply(pool, address(vault), false);
@@ -254,7 +254,7 @@ contract LendingInvariants is Test {
         for (uint i = 0; i < totalTrades; i++) {
             (sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
             spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
-            purchasePrice = spotPrice + (spotPrice * 25 / 100);
+            purchasePrice = spotPrice + (spotPrice * 5 / 100);
             spotPrice = purchasePrice;
             managerContract.buyTokens(spotPrice, tradeAmount, 0, address(this));
         }
@@ -273,7 +273,6 @@ contract LendingInvariants is Test {
             IVault(address(vault)).shift();
             nextFloorPrice = getNextFloorPrice(pool, address(vault));
             console.log("Next floor price (after shift) is: ", nextFloorPrice);
-            solvency();
         } else {
             revert(
                 string(
@@ -284,6 +283,9 @@ contract LendingInvariants is Test {
                 )
             );
         }
+
+        solvency();
+
     }
 
     function getNextFloorPrice(address pool, address vault) public view returns (uint256) {
@@ -328,7 +330,7 @@ contract LendingInvariants is Test {
         console.log("Anchor capacity + floor balance is: ", anchorCapacity + floorBalance);
         console.log("Circulating supply is: ", circulatingSupply);
 
-        // To guarantee solvency, Noma ensures that capacity > circulating supply each liquidity is deployed.
+        // To guarantee solvency, Oikos ensures that capacity > circulating supply each liquidity is deployed.
         require(anchorCapacity + floorCapacity > circulatingSupply, "Insolvency invariant failed");
     }
 

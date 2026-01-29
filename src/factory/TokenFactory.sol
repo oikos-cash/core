@@ -1,25 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// ███╗   ██╗ ██████╗ ███╗   ███╗ █████╗                               
-// ████╗  ██║██╔═══██╗████╗ ████║██╔══██╗                              
-// ██╔██╗ ██║██║   ██║██╔████╔██║███████║                              
-// ██║╚██╗██║██║   ██║██║╚██╔╝██║██╔══██║                              
-// ██║ ╚████║╚██████╔╝██║ ╚═╝ ██║██║  ██║                              
-// ╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝                              
-                                                                    
-// ██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗     
-// ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║     
-// ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗
-// ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
+//  ██████╗ ██╗██╗  ██╗ ██████╗ ███████╗
+// ██╔═══██╗██║██║ ██╔╝██╔═══██╗██╔════╝
+// ██║   ██║██║█████╔╝ ██║   ██║███████╗
+// ██║   ██║██║██╔═██╗ ██║   ██║╚════██║
+// ╚██████╔╝██║██║  ██╗╚██████╔╝███████║
+//  ╚═════╝ ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝                                 
+                                     
+
 //
-// Author: 0xsufi@noma.money
-// Copyright Noma Protocol 2025/2026
+//                                  
+// Copyright Oikos Protocol 2025/2026
 
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import { NomaToken } from "../token/NomaToken.sol";
+import { OikosToken } from "../token/OikosToken.sol";
 import { IAddressResolver } from "../interfaces/IAddressResolver.sol";
 import { VaultDeployParams } from "../types/Types.sol";
 import "../libraries/Utils.sol";
@@ -55,7 +50,7 @@ contract TokenFactory {
      *      The `initialOwner` must match the value you will pass to initialize() at deploy time
      *      (you used msg.sender before; pass the same when calling the deploy function).
      */
-    function predictNomaToken(
+    function predictOikosToken(
         VaultDeployParams memory p,
         address initialOwner
     )
@@ -71,7 +66,7 @@ contract TokenFactory {
     {
         tokenHash = keccak256(abi.encodePacked(p.name, p.symbol));
         implSalt = bytes32(uint256(tokenHash));
-        implAddr = Utils.getAddress(type(NomaToken).creationCode, uint256(implSalt));
+        implAddr = Utils.getAddress(type(OikosToken).creationCode, uint256(implSalt));
 
         // ✅ Use the same builder as deploy
         bytes memory initCalldata = _buildInitCalldata(p, initialOwner);
@@ -104,17 +99,17 @@ contract TokenFactory {
     // =========
 
     /**
-     * @notice Deploy NomaToken implementation and its ERC1967Proxy using salts chosen by the same prediction loop.
+     * @notice Deploy OikosToken implementation and its ERC1967Proxy using salts chosen by the same prediction loop.
      * @dev Uses CREATE2 and verifies deployed addresses match the predictions.
      *      Owner passed to initialize() is msg.sender (the factory) to mirror your original code.
      */
-    function deployNomaToken(
+    function deployOikosToken(
         VaultDeployParams memory p,
         address owner
     )
         external
         onlyFactory
-        returns (NomaToken nomaImpl, ERC1967Proxy proxy, bytes32 tokenHash)
+        returns (OikosToken oikosImpl, ERC1967Proxy proxy, bytes32 tokenHash)
     {
         (
             address predictedImpl,
@@ -122,15 +117,15 @@ contract TokenFactory {
             bytes32 _tokenHash,
             bytes32 implSalt,
             bytes32 proxySalt
-        ) = predictNomaToken(p, owner);
+        ) = predictOikosToken(p, owner);
 
         tokenHash = _tokenHash;
 
         // 1) Deploy implementation
-        nomaImpl = _deployImpl(predictedImpl, implSalt);
+        oikosImpl = _deployImpl(predictedImpl, implSalt);
 
         // 2) Deploy proxy
-        proxy = _deployProxy(p, owner, nomaImpl, predictedProxy, proxySalt);
+        proxy = _deployProxy(p, owner, oikosImpl, predictedProxy, proxySalt);
 
         // 3) Sanity checks
         if (IERC20(address(proxy)).totalSupply() != p.initialSupply) revert InvalidParams();
@@ -140,11 +135,11 @@ contract TokenFactory {
     function _deployImpl(
         address predictedImpl,
         bytes32 implSalt
-    ) internal returns (NomaToken nomaImpl) {
-        bytes memory implCode = type(NomaToken).creationCode;
+    ) internal returns (OikosToken oikosImpl) {
+        bytes memory implCode = type(OikosToken).creationCode;
         address implAddr = _doDeploy(implCode, uint256(implSalt));
         if (implAddr != predictedImpl) revert InvalidAddress();
-        nomaImpl = NomaToken(implAddr);
+        oikosImpl = OikosToken(implAddr);
     }
 
     function _buildInitCalldata(
@@ -152,8 +147,9 @@ contract TokenFactory {
         address owner
     ) internal view returns (bytes memory) {
         return abi.encodeWithSelector(
-            NomaToken.initialize.selector,
-            owner,          // token owner
+            OikosToken.initialize.selector,
+            owner,          // manager
+            owner,          // token owner (deployer)
             factory(),      // factory address (stable, via resolver)
             p.initialSupply,
             p.maxTotalSupply,
@@ -166,7 +162,7 @@ contract TokenFactory {
     function _deployProxy(
         VaultDeployParams memory p,
         address owner,
-        NomaToken nomaImpl,
+        OikosToken oikosImpl,
         address predictedProxy,
         bytes32 proxySalt
     ) internal returns (ERC1967Proxy proxy) {
@@ -174,7 +170,7 @@ contract TokenFactory {
 
         bytes memory proxyBytecode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
-            abi.encode(address(nomaImpl), initCalldata)
+            abi.encode(address(oikosImpl), initCalldata)
         );
 
         address proxyAddr = _doDeploy(proxyBytecode, uint256(proxySalt));
@@ -202,7 +198,7 @@ contract TokenFactory {
     // =========
 
     function factory() public view returns (address) {
-        return resolver.requireAndGetAddress("NomaFactory", "No factory");
+        return resolver.requireAndGetAddress("OikosFactory", "No factory");
     }
 
     modifier onlyFactory() {

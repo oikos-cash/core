@@ -122,8 +122,8 @@ contract LiquidationVault {
      * @notice Modifier to restrict access to internal calls.
      */
     modifier onlyInternalCalls() {
-        if (msg.sender != _v.factory && msg.sender != address(this)) revert OnlyInternalCalls();
-        _;        
+        if (msg.sender != IVault(address(this)).factory() && msg.sender != address(this)) revert OnlyInternalCalls();
+        _;
     }
 
     /**

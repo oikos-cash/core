@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 
-import { NomaFactory } from  "../../src/factory/NomaFactory.sol";
+import { OikosFactory } from  "../../src/factory/OikosFactory.sol";
 import { ProtocolParameters, PresaleProtocolParams, Decimals } from "../../src/types/Types.sol";
 import { AuxVault } from "../../src/vault/AuxVault.sol";
 
@@ -25,7 +25,7 @@ contract SetProtocolParameters is Script {
     uint256 privateKey = vm.envUint("PRIVATE_KEY");
     address deployer = vm.envAddress("DEPLOYER");
 
-    address vault = 0x1df48d9738e38A40fBf3B329865f4bc772e907F4; // Replace with actual AuxVault address
+    address vault = 0x6b936350384Fd18D3e73B9b62C6A5eAc6bd8ce08; // Replace with actual AuxVault address
 
     function run() public {  
         vm.startBroadcast(privateKey);
@@ -36,7 +36,7 @@ contract SetProtocolParameters is Script {
         // Read the JSON file
         string memory json = vm.readFile(path);
 
-        string memory networkId = "10143";
+        string memory networkId = "1337";
         // Parse the data for network ID `1337`
         bytes memory data = vm.parseJson(json, string.concat(string("."), networkId));
 
@@ -56,7 +56,7 @@ contract SetProtocolParameters is Script {
             115e16,         // Slide liquidity ratio
             15000,          // Discovery deploy bips
             10,             // shiftAnchorUpperBips
-            300,            // slideAnchorUpperBips
+            2500,           // slideAnchorUpperBips
             5,              // lowBalanceThresholdFactor
             2,              // highBalanceThresholdFactor
             5,              // inflationFee
@@ -67,11 +67,15 @@ contract SetProtocolParameters is Script {
             1_250,          // self repaying loan ltv treshold
             0.5e18,         // Adaptive supply curve half step
             2,              // Skim ratio
-            Decimals(6, 18),// Decimals (minDecimals, maxDecimals
-            1e14            // basePriceDecimals
+            Decimals(6, 18),// Decimals (minDecimals, maxDecimals)
+            1e14,           // basePriceDecimals
+            5,              // reservedBalanceThreshold (%)
+            // MEV Protection
+            120,            // twapPeriod (2 minutes)
+            200             // maxTwapDeviation (200 ticks ~2%)
         );
 
-        // NomaFactory nomaFactory = NomaFactory(addresses.Factory);
+        // OikosFactory nomaFactory = OikosFactory(addresses.Factory);
         // nomaFactory.setProtocolParameters(_params);
 
         AuxVault auxVault = AuxVault(vault);

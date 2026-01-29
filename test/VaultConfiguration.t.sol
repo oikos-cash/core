@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import { NomaFactory } from "../src/factory/NomaFactory.sol";
+import { OikosFactory } from "../src/factory/OikosFactory.sol";
 import { TestResolver } from "./resolver/Resolver.sol";
 import { DeployerFactory } from "../src/factory/DeployerFactory.sol";
 import { ExtFactory } from "../src/factory/ExtFactory.sol";
@@ -18,6 +18,9 @@ import {
     VaultUpgradeStep5
 } from "../src/vault/init/VaultUpgrade.sol";
 import { VaultFinalize } from "../src/vault/init/VaultFinalize.sol";
+import { ExtVaultShift } from "../src/vault/ExtVaultShift.sol";
+import { ExtVaultLending } from "../src/vault/ExtVaultLending.sol";
+import { ExtVaultLiquidation } from "../src/vault/ExtVaultLiquidation.sol";
 import {
     VaultDeployParams,
     PresaleUserParams,
@@ -56,10 +59,10 @@ interface IStaking {
     function unstake(uint256 amount) external;
 }
 
-/// @notice Mock WETH/WMON token for testing
-contract MockWMON {
-    string public name = "Wrapped MON";
-    string public symbol = "WMON";
+/// @notice Mock WETH/WBNB token for testing
+contract MockWBNB {
+    string public name = "Wrapped BNB";
+    string public symbol = "WBNB";
     uint8 public decimals = 18;
 
     mapping(address => uint256) public balanceOf;
@@ -105,26 +108,26 @@ contract VaultConfigurationTest is Test {
 
     address user = address(0xBEEF);
 
-    NomaFactory nomaFactory;
+    OikosFactory nomaFactory;
     TestResolver resolver;
     EtchVault etchVault;
     VaultUpgrade vaultUpgrade;
     ModelHelper modelHelper;
     AdaptiveSupply adaptiveSupply;
     TokenFactory tokenFactory;
-    MockWMON mockWMON;
+    MockWBNB mockWBNB;
 
     // Mainnet addresses
-    address constant WMON_MAINNET = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
-    address constant UNISWAP_FACTORY_MAINNET = 0x204FAca1764B154221e35c0d20aBb3c525710498;
+    address constant WBNB_MAINNET = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
+    address constant UNISWAP_FACTORY_MAINNET = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
     address constant PANCAKESWAP_FACTORY_MAINNET = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
     // Testnet addresses
-    address constant WMON_TESTNET = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
+    address constant WBNB_TESTNET = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     address constant UNISWAP_FACTORY_TESTNET = 0x961235a9020B05C44DF1026D956D1F4D78014276;
     address constant PANCAKESWAP_FACTORY_TESTNET = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
     // Select based on environment
-    address WMON;
-    address testWMON;
+    address WBNB;
+    address testWBNB;
     address private uniswapFactory;
     address private pancakeSwapFactory;
 
@@ -132,15 +135,15 @@ contract VaultConfigurationTest is Test {
 
     function setUp() public {
         // Set addresses based on mainnet/testnet flag
-        WMON = isMainnet ? WMON_MAINNET : WMON_TESTNET;
+        WBNB = isMainnet ? WBNB_MAINNET : WBNB_TESTNET;
         uniswapFactory = isMainnet ? UNISWAP_FACTORY_MAINNET : UNISWAP_FACTORY_TESTNET;
         pancakeSwapFactory = isMainnet ? PANCAKESWAP_FACTORY_MAINNET : PANCAKESWAP_FACTORY_TESTNET;
 
         vm.prank(deployer);
 
-        // Mock WMON
-        mockWMON = new MockWMON();
-        testWMON = address(mockWMON);
+        // Mock WBNB
+        mockWBNB = new MockWBNB();
+        testWBNB = address(mockWBNB);
 
         // Model Helper
         modelHelper = new ModelHelper();
@@ -183,8 +186,8 @@ contract VaultConfigurationTest is Test {
         ExtFactory extFactory = new ExtFactory(address(resolver));
 
         vm.prank(deployer);
-        // Noma Factory
-        nomaFactory = new NomaFactory(
+        // Oikos Factory
+        nomaFactory = new OikosFactory(
             uniswapFactory,
             pancakeSwapFactory,
             address(resolver),
@@ -194,12 +197,24 @@ contract VaultConfigurationTest is Test {
         );
 
         expectedAddressesInResolver.push(
-            ContractInfo("NomaFactory", address(nomaFactory))
+            ContractInfo("OikosFactory", address(nomaFactory))
         );
 
         vm.prank(deployer);
         etchVault = new EtchVault(address(nomaFactory), address(resolver));
-        vaultUpgrade = new VaultUpgrade(deployer, address(nomaFactory));
+
+        // Deploy facets first (pre-deployed pattern to stay under 24KB limit)
+        ExtVaultShift facetShift = new ExtVaultShift();
+        ExtVaultLending facetLending = new ExtVaultLending();
+        ExtVaultLiquidation facetLiquidation = new ExtVaultLiquidation();
+
+        vaultUpgrade = new VaultUpgrade(
+            deployer,
+            address(nomaFactory),
+            address(facetShift),
+            address(facetLending),
+            address(facetLiquidation)
+        );
 
         // VaultStep1 adds BaseVault (used by preDeployVault)
         VaultInit vaultStep1 = new VaultInit(deployer, address(nomaFactory));
@@ -247,9 +262,9 @@ contract VaultConfigurationTest is Test {
             ContractInfo("EtchVault", address(etchVault))
         );
 
-        // Use real WMON address (test requires fork)
+        // Use real WBNB address (test requires fork)
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
 
         vm.prank(deployer);
@@ -277,7 +292,10 @@ contract VaultConfigurationTest is Test {
             0.5e18,     // Adaptive supply curve half step
             2,          // Skim ratio
             Decimals(6, 18), // Decimals (minDecimals, maxDecimals)
-            1e14        // basePriceDecimals
+            1e14,       // basePriceDecimals
+            5,          // reservedBalanceThreshold (%)
+            120,        // twapPeriod (2 minutes)
+            200         // maxTwapDeviation (200 ticks ~2%)
         );
 
         vm.prank(deployer);
@@ -313,7 +331,7 @@ contract VaultConfigurationTest is Test {
             200_000_000e18,
             1e18,
             0,
-            WMON,  // Use real WMON (test requires fork)
+            WBNB,  // Use real WBNB (test requires fork)
             3000,
             0,
             true,
@@ -332,7 +350,8 @@ contract VaultConfigurationTest is Test {
             vaultDeployParams,
             ExistingDeployData({
                 pool: address(0),
-                token0: address(0)
+                token0: address(0),
+                vaultAddress: address(0)
             })
         );
     }

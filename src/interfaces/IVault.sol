@@ -48,6 +48,12 @@ interface IVault {
     function pool() external view returns (IUniswapV3Pool);
 
     /**
+     * @notice Retrieves the address of the factory that deployed this vault.
+     * @return The factory address.
+     */
+    function factory() external view returns (address);
+
+    /**
      * @notice Allows a borrower to repay their loan.
      * @dev Updates the vault state to reflect the repayment.
      * @param amount The amount to repay.
@@ -174,4 +180,88 @@ interface IVault {
     function setReferralEntity(bytes8 code, uint256 amount) external;
 
     function fixInbalance(address pool,uint160 sqrtPriceX96, uint256 amount) external;
+
+    function getActiveLoan(address who)
+        external
+        view
+        returns (
+            uint256 borrowAmount,
+            uint256 collateralAmount,
+            uint256 fees,
+            uint256 expiry,
+            uint256 duration
+        );
+
+    /**
+    * @notice Returns the address of an existing vault used for loan migration.
+    * @dev Returns address(0) if no existing vault is linked.
+    * @return The existing vault address.
+    */
+    function existingVault() external view returns (address);
+    function migrateLoan(address vault, address who) external;
+
+    /**
+    * @notice Retrieves vault data including circulating supply and token balances.
+    * @param addresses Protocol addresses.
+    * @return circulatingSupply The circulating supply of the vault.
+    * @return anchorToken1Balance The balance of token1 in the anchor position.
+    * @return discoveryToken1Balance The balance of token1 in the discovery position.
+    * @return discoveryToken0Balance The balance of token0 in the discovery position.
+    */
+    function getVaultData(ProtocolAddresses memory addresses) external view returns (uint256, uint256, uint256, uint256);
+
+    /**
+    * @notice Returns the timestamp of the last shift/slide operation.
+    * @dev Used for rate limiting to prevent MEV attacks via rapid consecutive shifts.
+    * @return timestamp The block.timestamp of the last shift/slide.
+    */
+    function getLastShiftTime() external view returns (bool, uint256);
+
+    /**
+    * @notice Returns the minimum cooldown period between shift/slide operations.
+    * @dev Default is 300 seconds (5 minutes).
+    * @return cooldown The cooldown period in seconds.
+    */
+    function getShiftCooldown() external view returns (uint256);
+
+    /**
+    * @notice Sets the minimum cooldown period between shift/slide operations.
+    * @dev Only callable by authorized roles (owner/manager).
+    * @param cooldown The new cooldown period in seconds.
+    */
+    function setShiftCooldown(uint256 cooldown) external;
+
+    /**
+    * @notice Updates the last shift timestamp to current block.timestamp.
+    * @dev Called internally after successful shift/slide operations.
+    */
+    function updateShiftTime() external;
+
+    /**
+    * @notice Returns the TWAP period used for manipulation detection.
+    * @dev Default is 600 seconds (10 minutes).
+    * @return period TWAP lookback period in seconds.
+    */
+    function getTwapPeriod() external view returns (uint32);
+
+    /**
+    * @notice Sets the TWAP period for manipulation detection.
+    * @dev Only callable by authorized roles (multisig).
+    * @param period TWAP lookback period in seconds (recommended: 300-1800).
+    */
+    function setTwapPeriod(uint32 period) external;
+
+    /**
+    * @notice Returns the maximum allowed deviation from TWAP in ticks.
+    * @dev Default is 200 ticks (~2%). Each tick ≈ 0.01% (1 basis point).
+    * @return maxTicks Maximum deviation in ticks.
+    */
+    function getTwapDeviationTicks() external view returns (uint256);
+
+    /**
+    * @notice Sets the maximum allowed deviation from TWAP.
+    * @dev Only callable by authorized roles (multisig).
+    * @param maxTicks Maximum deviation in ticks (recommended: 100-500).
+    */
+    function setTwapDeviationTicks(uint256 maxTicks) external;
 }

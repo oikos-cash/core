@@ -1,23 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// ███╗   ██╗ ██████╗ ███╗   ███╗ █████╗                               
-// ████╗  ██║██╔═══██╗████╗ ████║██╔══██╗                              
-// ██╔██╗ ██║██║   ██║██╔████╔██║███████║                              
-// ██║╚██╗██║██║   ██║██║╚██╔╝██║██╔══██║                              
-// ██║ ╚████║╚██████╔╝██║ ╚═╝ ██║██║  ██║                              
-// ╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝                              
-                                                                    
-// ██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗     
-// ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║     
-// ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗
-// ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
+//  ██████╗ ██╗██╗  ██╗ ██████╗ ███████╗
+// ██╔═══██╗██║██║ ██╔╝██╔═══██╗██╔════╝
+// ██║   ██║██║█████╔╝ ██║   ██║███████╗
+// ██║   ██║██║██╔═██╗ ██║   ██║╚════██║
+// ╚██████╔╝██║██║  ██╗╚██████╔╝███████║
+//  ╚═════╝ ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+                                     
+
 //
 // Contract: BaseVault.sol
-// Author: 0xsufi@noma.money
-// Copyright Noma Protocol 2024/2026
+//                                  
+// Copyright Oikos Protocol 2024/2026
 
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
 import {IModelHelper} from "../interfaces/IModelHelper.sol";
@@ -37,10 +32,12 @@ import {
 import {Utils} from "../libraries/Utils.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+
 import "../errors/Errors.sol";
 
-interface INomaFactory {
-    function deferredDeploy(address deployer) external;
+interface IOikosFactory {
+    function deferredDeploy(address deployer, address tokenRepo) external;
     function mintTokens(address to, uint256 amount) external;
     function burnFor(address from, uint256 amount) external;
     function teamMultiSig() external view returns (address);
@@ -53,7 +50,9 @@ interface IAdaptiveSupplyController {
 
 interface ILendingVault {
     function setFee(uint256 fee, uint256 feeToTreasury) external;
+    function getCollateralAmount() external view returns (uint256);
 }
+
 
 /**
  * @title BaseVault
@@ -74,7 +73,7 @@ contract BaseVault  {
         if (amount0Owed > 0) {
             uint256 balance0 = IERC20(_v.tokenInfo.token0).balanceOf(address(this));
             if (balance0 < amount0Owed) {
-                INomaFactory(factory()).mintTokens(address(this), amount0Owed);
+                IOikosFactory(factory()).mintTokens(address(this), amount0Owed);
             }
             // [C-02 FIX] Use SafeERC20
             IERC20(_v.tokenInfo.token0).safeTransfer(msg.sender, amount0Owed);
@@ -128,6 +127,7 @@ contract BaseVault  {
         address _deployer,
         address _pool, 
         address _presaleContract,
+        address _existingVault,
         ProtocolParameters memory _params
     ) public onlyFactory {
         LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
@@ -145,7 +145,12 @@ contract BaseVault  {
         _v.initialized = false; 
         _v.stakingEnabled = false;
         _v.isAdvancedConfEnabled = false; 
-        _v.timeLastMinted = 0;
+        _v.startedAt = block.timestamp;
+        _v.timeLastMinted =
+            keccak256(bytes(IERC20Metadata(_v.pool.token0()).symbol())) ==
+            keccak256(bytes("OKS"))
+                ? 1
+                : 0;
         _v.loanFee = uint8(_params.loanFee);
         _v.totalInterest = 0;
         _v.presaleContract = _presaleContract;
@@ -155,6 +160,7 @@ contract BaseVault  {
         _v.protocolParameters = _params;
         _v.manager = _owner;
         _v.isLocked[address(this)] = false;
+        _v.existingVault = _existingVault;
 
         IERC20(_v.pool.token0()).approve(_deployer, type(uint256).max);
     }
@@ -168,14 +174,13 @@ contract BaseVault  {
     function initializeLiquidity(
         LiquidityPosition[3] memory positions
     ) public onlyDeployer {
-        if (_v.initialized) revert AlreadyInitialized();
-
+        // if (_v.initialized) revert AlreadyInitialized();
         if (
-            positions[0].liquidity == 0 || 
-            positions[1].liquidity == 0 || 
+            positions[0].liquidity == 0 ||
+            positions[1].liquidity == 0 ||
             positions[2].liquidity == 0
         ) revert InvalidPosition();
-                
+
         _v.floorPosition = positions[0];
         _v.anchorPosition = positions[1];
         _v.discoveryPosition = positions[2];
@@ -190,7 +195,7 @@ contract BaseVault  {
         _v.stakingContract = params.stakingContract;
         _v.tokenRepo = params.tokenRepo;
         _v.sToken = params.sToken;
-        _v.vNOMAContract = params.vToken;
+        _v.vOKSContract = params.vToken;
         _v.stakingEnabled = true;
         _v.isStakingSetup = true;
         _v.initialized = true;
@@ -201,11 +206,12 @@ contract BaseVault  {
      */
     function afterPresale() public  {
         if (msg.sender != _v.presaleContract) revert OnlyInternalCalls();
-        INomaFactory(
-            _v.factory
-        ).deferredDeploy(
-            INomaFactory(_v.factory)
-            .getVaultsRepository(address(this)).deployerContract
+        address factoryAddr = factory();
+        IOikosFactory(factoryAddr)
+        .deferredDeploy(
+            IOikosFactory(factoryAddr)
+            .getVaultsRepository(address(this)).deployerContract,
+            _v.tokenRepo
         );
     }
 
@@ -325,13 +331,16 @@ contract BaseVault  {
     }
 
     /**
-     * @notice Retrieves the total collateral amount.
-     * @return The total collateral amount.
+     * @notice Retrieves the collateral amount held by the vault.
+     * @return The collateral amount.
      */
     function getCollateralAmount() public view returns (uint256) {
         return _v.collateralAmount;
-
     }
+
+
+
+
     /*-------------------------------------- USED BY MODEL HELPER --------------------------------------*/
 
     // *** ADDRESS RESOLVER *** //
@@ -398,11 +407,11 @@ contract BaseVault  {
 
     function factory() public view returns (address) {
         IAddressResolver resolver = _getResolver();
-        address _factory = resolver.getVaultAddress(address(this), Utils.stringToBytes32("NomaFactory"));
+        address _factory = resolver.getVaultAddress(address(this), Utils.stringToBytes32("OikosFactory"));
         if (_factory == address(0)) {
             _factory = resolver
                 .requireAndGetAddress(
-                    Utils.stringToBytes32("NomaFactory"), 
+                    Utils.stringToBytes32("OikosFactory"), 
                     "no Factory"
                 );
         }
@@ -411,10 +420,21 @@ contract BaseVault  {
     // *** MODIFIERS *** //
 
     /**
-     * @notice Modifier to restrict access to the deployer contract.
+     * @notice Modifier to restrict access to authorized parties.
      */
+    modifier onlyAuthorized() {
+        if (msg.sender != _v.deployerContract) {
+            if (
+                msg.sender != factory() &&
+                msg.sender != address(this) &&
+                msg.sender !=  _v.orchestrator
+            ) revert OnlyInternalCalls();
+        }
+        _;
+    }
+
     modifier onlyDeployer() {
-        if (msg.sender != _v.deployerContract) revert OnlyDeployer();
+        if (msg.sender != _v.deployerContract && msg.sender != address(this)) revert OnlyInternalCalls();
         _;
     }
 
@@ -423,12 +443,12 @@ contract BaseVault  {
      */
     modifier onlyInternalCalls() {
         if (
-            msg.sender != _v.factory && 
+            msg.sender != factory() &&
             msg.sender != address(this) &&
             msg.sender !=  _v.orchestrator
         ) revert OnlyInternalCalls();
 
-        _;        
+        _;
     }
 
     /**
@@ -445,29 +465,31 @@ contract BaseVault  {
      * @return selectors An array of function selectors.
      */
     function getFunctionSelectors() external pure virtual returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](14);
+        bytes4[] memory selectors = new bytes4[](15);
         selectors[0] = bytes4(keccak256(bytes("getVaultInfo()")));
+        // 24-field ProtocolParameters struct (includes MEV protection: twapPeriod, maxTwapDeviation)
         selectors[1] = bytes4(keccak256(
             bytes(
-                "initialize(address,address,address,address,address,(uint8,uint8,uint8,uint16[2],uint256,uint256,int24,int24,int24,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,(uint8,uint8),uint256))"
+                "initialize(address,address,address,address,address,address,(uint8,uint8,uint8,uint16[2],uint256,uint256,int24,int24,int24,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,(uint8,uint8),uint256,uint256,uint32,uint256))"
             )
         ));
         selectors[2] = bytes4(
             keccak256(
                 bytes("initializeLiquidity((int24,int24,uint128,uint256,int24,uint8)[3])")
             )
-        );      
+        );
         selectors[3] = bytes4(keccak256(bytes("uniswapV3MintCallback(uint256,uint256,bytes)")));
         selectors[4] = bytes4(keccak256(bytes("getUnderlyingBalances(uint8)")));
         selectors[5] = bytes4(keccak256(bytes("getExcessReserveToken1()")));
         selectors[6] = bytes4(keccak256(bytes("getProtocolAddresses()")));
         selectors[7] = bytes4(keccak256(bytes("pancakeV3MintCallback(uint256,uint256,bytes)")));
         selectors[8] = bytes4(keccak256(bytes("getPositions()")));
-        selectors[9] = bytes4(keccak256(bytes("getProtocolParameters()")));  
+        selectors[9] = bytes4(keccak256(bytes("getProtocolParameters()")));
         selectors[10] = bytes4(keccak256(bytes("afterPresale()")));
         selectors[11] = bytes4(keccak256(bytes("postInit((address,address,address,address))")));
         selectors[12] = bytes4(keccak256(bytes("getStakingContract()")));
-        selectors[13] = bytes4(keccak256(bytes("getCollateralAmount()")));
+        selectors[13] = bytes4(keccak256(bytes("factory()")));
+        selectors[14] = bytes4(keccak256(bytes("getCollateralAmount()")));
 
         return selectors;
     }

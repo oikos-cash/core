@@ -21,6 +21,7 @@ struct VaultStorage {
     address factory;
     address manager;
     IAddressResolver resolver;
+    uint256 startedAt;
 
     // Setup state
     bool isLendingSetup; // @deprecated - unused, kept for storage layout compatibility
@@ -40,7 +41,8 @@ struct VaultStorage {
     ProtocolParameters protocolParameters;
     bool initialized;
     bool stakingEnabled; 
-
+    address existingVault;
+    
     // Protocol addresses
     address deployerContract;
     address modelHelper;
@@ -49,7 +51,7 @@ struct VaultStorage {
     address proxyAddress; // @deprecated - unused, kept for storage layout compatibility
     address adaptiveSupplyController;
     address tokenRepo;
-    address vNOMAContract;
+    address vOKSContract;
     address orchestrator;
     address sToken;
 
@@ -83,20 +85,33 @@ struct VaultStorage {
 
     // Per vault lock state
     mapping(address => bool) isLocked;
+
+    // Rate limiting for shift/slide operations (MEV protection)
+    uint256 lastShiftTime;
+    uint256 shiftCooldown; // Minimum seconds between shifts (default: 300 = 5 min)
 }
 
 
 /**
  * @notice Library for accessing storage.
+ * @dev Uses EIP-7201 style namespaced storage to prevent collisions.
+ *      IMPORTANT: The storage slot identifier MUST NOT be changed after deployment
+ *      as it would break all existing vault storage.
  */
 library LibAppStorage {
+    /// @dev Storage slot computed as: keccak256("oikos.protocol.storage.vault.v1") - 1
+    /// Using EIP-7201 pattern for reduced collision risk
+    /// WARNING: Changing this value breaks ALL existing vault deployments!
+    bytes32 private constant VAULT_STORAGE_SLOT = 0x645a8522529f396704427c958181b8b3c2e3de5bc8cc43cc59de795053c1b1a4;
+
     /**
      * @notice Get the vault storage.
      * @return vs The vault storage.
      */
     function vaultStorage() internal pure returns (VaultStorage storage vs) {
+        bytes32 slot = VAULT_STORAGE_SLOT;
         assembly {
-            vs.slot := keccak256(add(0x20, "noma.money.vaultstorage"), 32)
+            vs.slot := slot
         }
     }
 }

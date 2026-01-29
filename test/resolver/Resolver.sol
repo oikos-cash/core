@@ -23,7 +23,7 @@ contract TestResolver is Ownable {
 
     function initFactory(address _factory) external onlyOwner {
         if (_factory == address(0)) revert InvalidAddress();
-        repository["NomaFactory"] = _factory;
+        repository["OikosFactory"] = _factory;
     }
 
     function importAddresses(bytes32[] calldata names, address[] calldata destinations) external onlyOwner {
@@ -89,7 +89,7 @@ contract TestResolver is Ownable {
     }
 
     modifier onlyFactoryOrManager() {
-        if (msg.sender != repository["NomaFactory"] && msg.sender != owner()) {
+        if (msg.sender != repository["OikosFactory"] && msg.sender != owner()) {
             revert OnlyFactoryOrManagerAllowed();
         }
         _;

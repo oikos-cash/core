@@ -4,7 +4,7 @@ pragma solidity ^0.8.23;
 import "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {NomaDividends} from "../src/controllers/NomaDividends.sol";
+import {OikosDividends} from "../src/controllers/OikosDividends.sol";
 import {Resolver} from "../src/Resolver.sol";
 import {Utils} from "../src/libraries/Utils.sol";
 import {VaultDescription} from "../src/types/Types.sol";
@@ -19,11 +19,11 @@ contract MockRewardToken is ERC20 {
     }
 }
 
-/// @notice Mock shares token that integrates with NomaDividends
+/// @notice Mock shares token that integrates with OikosDividends
 contract MockSharesToken is ERC20 {
-    NomaDividends public dividendsManager;
+    OikosDividends public dividendsManager;
 
-    constructor() ERC20("Mock NOMA", "mNOMA") {}
+    constructor() ERC20("Mock OKS", "mOKS") {}
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -33,7 +33,7 @@ contract MockSharesToken is ERC20 {
         _burn(from, amount);
     }
 
-    function setDividendsManager(NomaDividends _manager) external {
+    function setDividendsManager(OikosDividends _manager) external {
         dividendsManager = _manager;
     }
 
@@ -85,9 +85,9 @@ contract MockFactory {
 }
 
 /// @title DividendsTest
-/// @notice Comprehensive tests for NomaDividends contract
+/// @notice Comprehensive tests for OikosDividends contract
 contract DividendsTest is Test {
-    NomaDividends public dividends;
+    OikosDividends public dividends;
     MockSharesToken public sharesToken;
     MockRewardToken public rewardToken1;
     MockRewardToken public rewardToken2;
@@ -118,7 +118,7 @@ contract DividendsTest is Test {
         factory.registerVault(vault);
 
         // Deploy dividends contract
-        dividends = new NomaDividends(address(factory), address(resolver));
+        dividends = new OikosDividends(address(factory), address(resolver));
 
         // Deploy shares token
         sharesToken = new MockSharesToken();
@@ -127,10 +127,10 @@ contract DividendsTest is Test {
         rewardToken1 = new MockRewardToken("Reward Token 1", "RWD1");
         rewardToken2 = new MockRewardToken("Reward Token 2", "RWD2");
 
-        // Configure resolver with NomaToken address
+        // Configure resolver with OikosToken address
         bytes32[] memory names = new bytes32[](1);
         address[] memory addresses = new address[](1);
-        names[0] = Utils.stringToBytes32("NomaToken");
+        names[0] = Utils.stringToBytes32("OikosToken");
         addresses[0] = address(sharesToken);
         resolver.importAddresses(names, addresses);
 
@@ -326,7 +326,7 @@ contract DividendsTest is Test {
         dividends.claim(address(rewardToken1));
 
         // Check vesting entry created
-        NomaDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
         vm.prank(user1);
         entries = dividends.getVestingEntries(address(rewardToken1));
 
@@ -351,8 +351,8 @@ contract DividendsTest is Test {
 
         // Check vesting entries for both tokens
         vm.startPrank(user1);
-        NomaDividends.VestingEntry[] memory entries1 = dividends.getVestingEntries(address(rewardToken1));
-        NomaDividends.VestingEntry[] memory entries2 = dividends.getVestingEntries(address(rewardToken2));
+        OikosDividends.VestingEntry[] memory entries1 = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory entries2 = dividends.getVestingEntries(address(rewardToken2));
         vm.stopPrank();
 
         assertEq(entries1.length, 1);
@@ -414,7 +414,7 @@ contract DividendsTest is Test {
 
         // Check vesting entry updated
         vm.prank(user1);
-        NomaDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
         assertEq(entries[0].claimed, 500 ether);
     }
 
@@ -495,7 +495,7 @@ contract DividendsTest is Test {
 
         // Check two tranches exist
         vm.prank(user1);
-        NomaDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
         assertEq(entries.length, 2);
 
         // First tranche: 1000 ether, 50% vested (90 days)
@@ -618,11 +618,11 @@ contract DividendsTest is Test {
         // Setup new dividends pointing to empty token
         bytes32[] memory names = new bytes32[](1);
         address[] memory addresses = new address[](1);
-        names[0] = Utils.stringToBytes32("NomaToken");
+        names[0] = Utils.stringToBytes32("OikosToken");
         addresses[0] = address(emptySharesToken);
         resolver.importAddresses(names, addresses);
 
-        NomaDividends emptyDividends = new NomaDividends(address(factory), address(resolver));
+        OikosDividends emptyDividends = new OikosDividends(address(factory), address(resolver));
         emptyDividends.setSharesToken();
 
         vm.startPrank(vault);
@@ -745,7 +745,7 @@ contract DividendsTest is Test {
 
         // Check 3 tranches
         vm.prank(user1);
-        NomaDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
         assertEq(entries.length, 3);
         assertEq(entries[0].amount, 1000 ether);
         assertEq(entries[1].amount, 1000 ether);
@@ -799,12 +799,12 @@ contract DividendsTest is Test {
         assertEq(dividends.getRewardTokens().length, 10);
     }
 
-    // ============ NOMA TOKEN ACTIVE/INACTIVE FLOW TESTS ============
+    // ============ OKS TOKEN ACTIVE/INACTIVE FLOW TESTS ============
 
-    /// @notice Test dividend flow when $NOMA token is NOT active (sharesToken = address(0))
-    function testFlow_WithoutNomaToken_DistributeSilentlyReturns() public {
+    /// @notice Test dividend flow when $OKS token is NOT active (sharesToken = address(0))
+    function testFlow_WithoutOikosToken_DistributeSilentlyReturns() public {
         // Create fresh dividends contract without setting shares token
-        NomaDividends freshDividends = new NomaDividends(address(factory), address(resolver));
+        OikosDividends freshDividends = new OikosDividends(address(factory), address(resolver));
 
         // Verify shares token is not set
         assertEq(address(freshDividends.sharesToken()), address(0));
@@ -831,9 +831,9 @@ contract DividendsTest is Test {
     }
 
     /// @notice Test that claim operations fail gracefully when sharesToken is not set
-    function testFlow_WithoutNomaToken_ClaimRevertsOnBalanceCall() public {
+    function testFlow_WithoutOikosToken_ClaimRevertsOnBalanceCall() public {
         // Create fresh dividends contract without setting shares token
-        NomaDividends freshDividends = new NomaDividends(address(factory), address(resolver));
+        OikosDividends freshDividends = new OikosDividends(address(factory), address(resolver));
 
         // Verify shares token is not set
         assertEq(address(freshDividends.sharesToken()), address(0));
@@ -844,9 +844,9 @@ contract DividendsTest is Test {
     }
 
     /// @notice Test that claim fails when sharesToken is not set
-    function testFlow_WithoutNomaToken_ClaimFails() public {
+    function testFlow_WithoutOikosToken_ClaimFails() public {
         // Create fresh dividends contract without setting shares token
-        NomaDividends freshDividends = new NomaDividends(address(factory), address(resolver));
+        OikosDividends freshDividends = new OikosDividends(address(factory), address(resolver));
 
         // Try to claim - should revert
         vm.prank(user1);
@@ -855,9 +855,9 @@ contract DividendsTest is Test {
     }
 
     /// @notice Test that claimAll is a no-op when sharesToken is not set (no reward tokens registered)
-    function testFlow_WithoutNomaToken_ClaimAllIsNoOp() public {
+    function testFlow_WithoutOikosToken_ClaimAllIsNoOp() public {
         // Create fresh dividends contract without setting shares token
-        NomaDividends freshDividends = new NomaDividends(address(factory), address(resolver));
+        OikosDividends freshDividends = new OikosDividends(address(factory), address(resolver));
 
         // claimAll returns early when no reward tokens registered (doesn't revert)
         // This is expected behavior - nothing to claim
@@ -868,8 +868,8 @@ contract DividendsTest is Test {
         assertEq(freshDividends.getRewardTokens().length, 0);
     }
 
-    /// @notice Test the full dividend flow with $NOMA token active
-    function testFlow_WithNomaToken_FullDividendCycle() public {
+    /// @notice Test the full dividend flow with $OKS token active
+    function testFlow_WithOikosToken_FullDividendCycle() public {
         // This test uses the main dividends contract which has sharesToken set
 
         // Verify shares token is set
@@ -909,12 +909,12 @@ contract DividendsTest is Test {
 
         // Step 5: Verify vesting entries created
         vm.prank(user1);
-        NomaDividends.VestingEntry[] memory user1Entries = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory user1Entries = dividends.getVestingEntries(address(rewardToken1));
         assertEq(user1Entries.length, 1);
         assertEq(user1Entries[0].amount, 2000 ether);
 
         vm.prank(user2);
-        NomaDividends.VestingEntry[] memory user2Entries = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory user2Entries = dividends.getVestingEntries(address(rewardToken1));
         assertEq(user2Entries.length, 1);
         assertEq(user2Entries[0].amount, 1000 ether);
 
@@ -961,15 +961,15 @@ contract DividendsTest is Test {
         console.log("  User2 received:", rewardToken1.balanceOf(user2) - user2InitialBalance);
     }
 
-    /// @notice Test activating $NOMA token after contract deployment
-    function testFlow_ActivatingNomaToken_EnablesDividends() public {
+    /// @notice Test activating $OKS token after contract deployment
+    function testFlow_ActivatingOikosToken_EnablesDividends() public {
         // Create fresh dividends contract
-        NomaDividends freshDividends = new NomaDividends(address(factory), address(resolver));
+        OikosDividends freshDividends = new OikosDividends(address(factory), address(resolver));
 
         // Create a fresh shares token for this test
         MockSharesToken freshSharesToken = new MockSharesToken();
 
-        // Phase 1: Without NOMA token - distributions are no-ops
+        // Phase 1: Without OKS token - distributions are no-ops
         assertEq(address(freshDividends.sharesToken()), address(0));
 
         rewardToken1.mint(vault, 3000 ether);
@@ -981,11 +981,11 @@ contract DividendsTest is Test {
         // No tokens transferred, no reward registered
         assertEq(freshDividends.getRewardTokens().length, 0);
 
-        // Phase 2: Activate NOMA token
+        // Phase 2: Activate OKS token
         // First update the resolver to point to new shares token
         bytes32[] memory names = new bytes32[](1);
         address[] memory addresses = new address[](1);
-        names[0] = Utils.stringToBytes32("NomaToken");
+        names[0] = Utils.stringToBytes32("OikosToken");
         addresses[0] = address(freshSharesToken);
         resolver.importAddresses(names, addresses);
 
@@ -1028,13 +1028,13 @@ contract DividendsTest is Test {
         assertEq(freshDividends.getRewardTokens().length, 1);
         assertEq(freshDividends.getTotalDistributed(address(rewardToken1)), 1001 ether); // 1 init + 1000
 
-        console.log("NOMA token activation test passed:");
+        console.log("OKS token activation test passed:");
         console.log("  Before activation: distributions were no-ops");
         console.log("  After activation: user1 can claim", claimable);
     }
 
     /// @notice Test that dividend hook integration works correctly with shares transfers
-    function testFlow_WithNomaToken_TransferHookIntegration() public {
+    function testFlow_WithOikosToken_TransferHookIntegration() public {
         // Distribute rewards
         uint256 distributeAmount = 2000 ether;
         vm.startPrank(vault);
@@ -1093,8 +1093,8 @@ contract DividendsTest is Test {
         console.log("  User2 claimable after transfers:", user2Claimable);
     }
 
-    /// @notice Test multiple distribution cycles with $NOMA token
-    function testFlow_WithNomaToken_MultipleDistributionCycles() public {
+    /// @notice Test multiple distribution cycles with $OKS token
+    function testFlow_WithOikosToken_MultipleDistributionCycles() public {
         // Disable auto-claim to test vesting accumulation cleanly
         dividends.setAutoClaimOnTransfer(false);
 
@@ -1135,7 +1135,7 @@ contract DividendsTest is Test {
 
         // Verify 3 vesting tranches
         vm.prank(user1);
-        NomaDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
+        OikosDividends.VestingEntry[] memory entries = dividends.getVestingEntries(address(rewardToken1));
         assertEq(entries.length, 3);
 
         // Each tranche should have 1000 ether (50% of 2000)

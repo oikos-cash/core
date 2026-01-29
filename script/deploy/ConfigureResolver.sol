@@ -6,15 +6,15 @@ pragma solidity ^0.8.0;
 import "forge-std/Script.sol";
 import { Utils } from "../../src/libraries/Utils.sol";
 import { Resolver } from "../../src/Resolver.sol";
-import { NomaDividends } from "../../src/controllers/NomaDividends.sol";
+import { OikosDividends } from "../../src/controllers/OikosDividends.sol";
 
 struct ContractInfo {
     string name;
     address addr;
 }
 
-interface INomaToken {
-    function setDividendsManager(NomaDividends _manager) external;
+interface IOikosToken {
+    function setDividendsManager(OikosDividends _manager) external;
     function owner() external view returns (address);
 }
 
@@ -28,18 +28,18 @@ contract ConfigureResolver is Script {
     ContractInfo[] private expectedAddressesInResolver;
 
     Resolver private resolver;
-    NomaDividends private nomaDividends;
+    OikosDividends private nomaDividends;
 
-    address private resolverAddress = 0x488eBfab208ADFBf97f98579EC694B82664d6e6B;
-    address private nomaTokenAddress = 0x11d9e5b4Fd7CB81eE9c40AB2561CeD9C58D66146;
-    address private nomaFactoryAddress = 0xA2839bA831284Ea6567B8a6Ab3BA02aaE2b3f147;
+    address private resolverAddress = 0x91377381456865e474a33FF157444f26B0645fD4;
+    address private nomaTokenAddress = 0x614da16Af43A8Ad0b9F419Ab78d14D163DEa6488;
+    address private nomaFactoryAddress = 0x525E38Ae23716e169086E6B8b474AB054E3734c9;
 
     function run() public {  
         vm.startBroadcast(privateKey);
 
         resolver = Resolver(resolverAddress);
         
-        nomaDividends = new NomaDividends(nomaFactoryAddress, resolverAddress);
+        nomaDividends = new OikosDividends(nomaFactoryAddress, resolverAddress);
 
         expectedAddressesInResolver.push(
             ContractInfo("DividendDistributor", address(nomaDividends))
@@ -48,7 +48,7 @@ contract ConfigureResolver is Script {
         console.log("DividendDistributor deployed to address: ", address(nomaDividends));
 
         expectedAddressesInResolver.push(
-            ContractInfo("NomaToken", nomaTokenAddress)
+            ContractInfo("OikosToken", nomaTokenAddress)
         );
 
         // Configure resolver
@@ -56,10 +56,10 @@ contract ConfigureResolver is Script {
 
         nomaDividends.setSharesToken{gas: 1000000}();
 
-        address contractOwner = INomaToken(nomaTokenAddress).owner();
+        address contractOwner = IOikosToken(nomaTokenAddress).owner();
         console.log("Contract owner is ", contractOwner);
 
-        INomaToken(nomaTokenAddress).setDividendsManager{gas: 3000000}(nomaDividends);
+        IOikosToken(nomaTokenAddress).setDividendsManager{gas: 3000000}(nomaDividends);
 
         vm.stopBroadcast();
     }

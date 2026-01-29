@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import { ExtVault } from "../ExtVault.sol";
-import { StakingVault } from "../StakingVault.sol"; 
-import { AuxVault } from "../AuxVault.sol"; 
+import { StakingVault } from "../StakingVault.sol";
+import { AuxVault } from "../AuxVault.sol";
 
-import { LendingVault } from "../LendingVault.sol"; 
+import { LendingVault } from "../LendingVault.sol";
 import { LiquidationVault } from "../LiquidationVault.sol";
 import { LendingOpsVault } from "../LendingOpsVault.sol";
 import { IDiamondCut } from "../../interfaces/IDiamondCut.sol";
@@ -38,7 +37,8 @@ interface IDiamondInterface {
 /**
  * @title VaultUpgrade
  * @notice A contract for starting the upgrade process of a Diamond proxy vault.
- * @dev This contract is responsible for adding the ExtVault facet and initiating the upgrade process.
+ * @dev This contract is responsible for adding the ExtVault facets and initiating the upgrade process.
+ *      Uses pre-deployed facet addresses to stay under 24KB contract size limit.
  */
 contract VaultUpgrade {
     address private owner; // The address of the contract owner.
@@ -46,53 +46,64 @@ contract VaultUpgrade {
     address private upgradeStep1; // The address of the first upgrade step contract.
     address private upgradeFinalize; // The address of the final upgrade step contract.
 
+    // Pre-deployed facet addresses
+    address private immutable facetShift;
+    address private immutable facetLending;
+    address private immutable facetLiquidation;
 
     /**
      * @notice Constructor to initialize the VaultUpgrade contract.
      * @param _owner The address of the contract owner.
      * @param _factory The address of the factory contract.
+     * @param _facetShift Pre-deployed ExtVaultShift address.
+     * @param _facetLending Pre-deployed ExtVaultLending address.
+     * @param _facetLiquidation Pre-deployed ExtVaultLiquidation address.
      */
-    constructor(address _owner, address _factory) {
+    constructor(
+        address _owner,
+        address _factory,
+        address _facetShift,
+        address _facetLending,
+        address _facetLiquidation
+    ) {
+        if (_facetShift == address(0)) revert InvalidAddress();
+        if (_facetLending == address(0)) revert InvalidAddress();
+        if (_facetLiquidation == address(0)) revert InvalidAddress();
+
         owner = _owner;
         factory = _factory;
+        facetShift = _facetShift;
+        facetLending = _facetLending;
+        facetLiquidation = _facetLiquidation;
     }
 
     /**
-     * @notice Initializes the contract with the someContract and the first upgrade step contract.
-     * @param _upgradeStep1 The address of the first upgrade step contract.
-     */
-    // function init(address _upgradeStep1) onlyOwner public {
-    //     if (_upgradeStep1 == address(0)) {
-    //         revert InvalidAddress();
-    //     }
-    //     upgradeStep1 = _upgradeStep1;
-    // }
-
-    /**
-     * @notice Starts the upgrade process by adding the ExtVault facet and initiating the next upgrade step.
+     * @notice Starts the upgrade process by adding the ExtVault facets and initiating the next upgrade step.
      * @param diamond The address of the Diamond proxy contract.
+     * @dev Uses pre-deployed facet addresses (set in constructor) to stay under 24KB limit.
      */
     function doUpgradeStart(address diamond) public onlyFactory {
-        if (diamond == address(0)) {
-            revert InvalidAddress();
-        }
+        if (diamond == address(0)) revert InvalidAddress();
 
-        address[] memory newFacets = new address[](1);
-        IDiamondCut.FacetCutAction[] memory actions = new IDiamondCut.FacetCutAction[](1);
-        bytes4[][] memory functionSelectors = new bytes4[][](1);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
 
-        newFacets[0] = address(new ExtVault());
-        actions[0] = IDiamondCut.FacetCutAction.Add;
-        functionSelectors[0] = IFacet(newFacets[0]).getFunctionSelectors();
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: facetShift,
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: IFacet(facetShift).getFunctionSelectors()
+        });
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](newFacets.length);
-        for (uint256 i = 0; i < newFacets.length; i++) {
-            cuts[i] = IDiamondCut.FacetCut({
-                facetAddress: newFacets[i],
-                action: actions[i],
-                functionSelectors: functionSelectors[i]
-            });
-        }
+        cuts[1] = IDiamondCut.FacetCut({
+            facetAddress: facetLending,
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: IFacet(facetLending).getFunctionSelectors()
+        });
+
+        cuts[2] = IDiamondCut.FacetCut({
+            facetAddress: facetLiquidation,
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: IFacet(facetLiquidation).getFunctionSelectors()
+        });
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         IDiamondInterface(diamond).transferOwnership(factory);

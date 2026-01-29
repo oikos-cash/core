@@ -147,6 +147,7 @@ struct VaultInitParams {
     address presaleContract;
     address token0;
     address tokenRepo;
+    address existingVault;
     ProtocolParameters protocolParameters;
 }
 
@@ -308,6 +309,10 @@ struct ProtocolParameters {
     uint256 skimRatio;
     Decimals decimals;
     uint256 basePriceDecimals;
+    uint256 reservedBalanceThreshold;
+    // MEV Protection Fields (for fresh deployments)
+    uint32 twapPeriod;           // TWAP lookback in seconds (default: 120 = 2 min)
+    uint256 maxTwapDeviation;    // Max deviation in ticks (default: 200 = ~2%)
 }
 
 /// @notice Parameters for configuring the protocol exposed to creators.
@@ -348,11 +353,12 @@ struct DeploymentData {
     int24 tickSpacing;
     address vaultAddress;
     address vaultUpgrade;
-    address sNOMA;
+    address sOKS;
     address stakingContract;
     address presaleContract;
     address tokenRepo;
     address vToken;
+    address existingVault;
 }
 
 // @notice Parameters for swapping tokens.
@@ -386,6 +392,7 @@ struct ReferralEntity {
 struct ExistingDeployData {
     address token0;
     address pool;
+    address vaultAddress;
 }
 
 struct PostInitParams {

@@ -6,7 +6,7 @@ import { Utils } from "../../src/libraries/Utils.sol";
 import { IUniswapV3Pool } from "v3-core/interfaces/IUniswapV3Pool.sol";
 import { IAddressResolver } from "../../src/interfaces/IAddressResolver.sol";
 import { Deployer } from "../../src/Deployer.sol";
-import { NomaFactory } from "../../src/factory/NomaFactory.sol";
+import { OikosFactory } from "../../src/factory/OikosFactory.sol";
 import { VaultDeployParams, VaultDescription, ProtocolParameters, PresaleProtocolParams, Decimals } from "../../src/types/Types.sol";
 import { PresaleFactory } from "../../src/factory/PresaleFactory.sol";
 
@@ -14,7 +14,7 @@ import { PresaleFactory } from "../../src/factory/PresaleFactory.sol";
 import { DeployerFactory } from "../../src/factory/DeployerFactory.sol"; 
 import { ExtFactory } from "../../src/factory/ExtFactory.sol";
 import { Resolver } from "../../src/Resolver.sol";
-import { NomaDividends } from "../../src/controllers/NomaDividends.sol";
+import { OikosDividends } from "../../src/controllers/OikosDividends.sol";
 import { WETH9 } from "../../src/token/WETH9.sol";
 
 interface IWETH {
@@ -42,33 +42,33 @@ contract DeployFactory is Script {
     bool isMainnet = vm.envBool("DEPLOY_FLAG_MAINNET"); 
 
     // Constants
-    address WMON_monad_mainnet = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
-    address uniswapFactory_monad_mainnet = 0x204FAca1764B154221e35c0d20aBb3c525710498;
-    address pancakeSwapFactory__monad_mainnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
+    address WBNB_bsc_mainnet = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
+    address uniswapFactory_bsc_mainnet = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
+    address pancakeSwapFactory__bsc_mainnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
 
-    address WMON_monad_testnet = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
-    address uniswapFactory_monad_testnet = 0x961235a9020B05C44DF1026D956D1F4D78014276;
-    address pancakeSwapFactory__monad_testnet = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
-    address WMON = isMainnet ? WMON_monad_mainnet : WMON_monad_testnet;
+    address WBNB_bsc_testnet = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    address uniswapFactory_bsc_testnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
+    address pancakeSwapFactory__bsc_testnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
+    address WBNB = isMainnet ? WBNB_bsc_mainnet : WBNB_bsc_testnet;
 
     // uniswapV3Factory: "0x961235a9020B05C44DF1026D956D1F4D78014276",
     // pancakeV3Factory: "0x3b7838D96Fc18AD1972aFa17574686be79C50040",
     // pancakeQuoterV2: "0x7f988126C2c5d4967Bb5E70bDeB7e26DB6BD5C28",
     // uniswapQuoterV2: "0x1b4E313fEF15630AF3e6F2dE550Dbf4cC9D3081d",
-    // WMON: "0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701",
+    // WBNB: "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd",
 
     ContractInfo[] private expectedAddressesInResolver;
 
-    NomaFactory private nomaFactory;
+    OikosFactory private nomaFactory;
     Resolver private resolver;
-    NomaDividends private dividendDistributor;
+    OikosDividends private dividendDistributor;
 
     function run() public {  
 
         vm.startBroadcast(privateKey);
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", WMON)
+            ContractInfo("WBNB", WBNB)
         );
         
         // Resolver
@@ -91,10 +91,10 @@ contract DeployFactory is Script {
         DeployerFactory deploymentFactory = new DeployerFactory(address(resolver));
         ExtFactory extFactory = new ExtFactory(address(resolver));
 
-        // Noma Factory
-        nomaFactory = new NomaFactory(
-            isMainnet ? uniswapFactory_monad_mainnet : uniswapFactory_monad_testnet,
-            isMainnet ? pancakeSwapFactory__monad_mainnet : pancakeSwapFactory__monad_testnet,
+        // Oikos Factory
+        nomaFactory = new OikosFactory(
+            isMainnet ? uniswapFactory_bsc_mainnet : uniswapFactory_bsc_testnet,
+            isMainnet ? pancakeSwapFactory__bsc_mainnet : pancakeSwapFactory__bsc_testnet,
             address(resolver),
             address(deploymentFactory),
             address(extFactory),
@@ -102,7 +102,7 @@ contract DeployFactory is Script {
         );
         
         expectedAddressesInResolver.push(
-            ContractInfo("NomaFactory", address(nomaFactory))
+            ContractInfo("OikosFactory", address(nomaFactory))
         );
 
         ProtocolParameters memory _params =
@@ -127,7 +127,11 @@ contract DeployFactory is Script {
             0.5e18,         // Adaptive supply curve half step
             2,              // Skim ratio
             Decimals(6, 18),// min and max decimals
-            1e14            // basePriceDecimals
+            1e14,           // basePriceDecimals
+            5,              // reservedBalanceThreshold (%)
+            // MEV Protection
+            120,            // twapPeriod (2 minutes - works with cardinality ~50 on BSC)
+            200             // maxTwapDeviation (200 ticks ~2%)
         );
 
         PresaleProtocolParams memory _presaleParams =

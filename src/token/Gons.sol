@@ -58,7 +58,7 @@ contract GonsToken is ERC20Permit, ERC20Recovery {
     // This is denominated in Fragments, because the gons-fragments conversion might change before it's fully paid.
     mapping (address => mapping (address => uint256)) private _allowedFragments;
 
-    constructor(string memory name, string memory symbol, uint256 _initialSupply) ERC20(name, symbol, 18) ERC20Permit("Staked Noma") {
+    constructor(string memory name, string memory symbol, uint256 _initialSupply) ERC20(name, symbol, 18) ERC20Permit("Staked Oikos") {
         // Ensure initial supply is divisible by GONS_DIVISOR for clean math
         // Round up to nearest multiple of GONS_DIVISOR if needed
         uint256 remainder = _initialSupply % GONS_DIVISOR;

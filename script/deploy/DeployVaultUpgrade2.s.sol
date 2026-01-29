@@ -42,14 +42,14 @@ contract DeployVaultUpgrade2 is Script {
     Resolver private resolver;
 
     // Constants
-    address WMON_monad_mainnet = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
-    address uniswapFactory_monad_mainnet = 0x204FAca1764B154221e35c0d20aBb3c525710498;
-    address pancakeSwapFactory__monad_mainnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
+    address WBNB_bsc_mainnet = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
+    address uniswapFactory_bsc_mainnet = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
+    address pancakeSwapFactory__bsc_mainnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
 
-    address WMON_monad_testnet = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
-    address uniswapFactory_monad_testnet = 0x961235a9020B05C44DF1026D956D1F4D78014276;
-    address pancakeSwapFactory__monad_testnet = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
-    address WMON = isMainnet ? WMON_monad_mainnet : WMON_monad_testnet;
+    address WBNB_bsc_testnet = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    address uniswapFactory_bsc_testnet = 0x961235a9020B05C44DF1026D956D1F4D78014276;
+    address pancakeSwapFactory__bsc_testnet = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
+    address WBNB = isMainnet ? WBNB_bsc_mainnet : WBNB_bsc_testnet;
 
     function run() public {  
         vm.startBroadcast(privateKey);
@@ -60,7 +60,7 @@ contract DeployVaultUpgrade2 is Script {
 
         // Read the JSON file
         string memory json = vm.readFile(path);
-        string memory networkId = isChainFork ? "1337" : isMainnet ? "143" : "10143"; 
+        string memory networkId = isChainFork ? "1337" : isMainnet ? "56" : "10143"; 
 
         // Parse the data for network ID 
         bytes memory data = vm.parseJson(json, string.concat(string("."), networkId));

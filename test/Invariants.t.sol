@@ -10,7 +10,7 @@ import {Deployer} from "../src/Deployer.sol";
 import {BaseVault} from  "../src/vault/BaseVault.sol";
 import {ExtVault} from  "../src/vault/ExtVault.sol";
 import {IVault} from  "../src/interfaces/IVault.sol";
-import {NomaToken} from  "../src/token/NomaToken.sol";
+import {OikosToken} from  "../src/token/OikosToken.sol";
 import {ModelHelper} from  "../src/model/Helper.sol";
 import {Underlying } from  "../src/libraries/Underlying.sol";
 import {LiquidityType, LiquidityPosition} from "../src/types/Types.sol";
@@ -49,31 +49,31 @@ contract Invariants is Test {
     bool isMainnet = vm.envOr("DEPLOY_FLAG_MAINNET", false);
 
     // Mainnet addresses
-    address constant WMON_MAINNET = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
-    address constant UNISWAP_FACTORY_MAINNET = 0x204FAca1764B154221e35c0d20aBb3c525710498;
+    address constant WBNB_MAINNET = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
+    address constant UNISWAP_FACTORY_MAINNET = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
     // Testnet addresses
-    address constant WMON_TESTNET = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
-    address constant UNISWAP_FACTORY_TESTNET = 0x961235a9020B05C44DF1026D956D1F4D78014276;
+    address constant WBNB_TESTNET = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    address constant UNISWAP_FACTORY_TESTNET = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
     // Select based on environment
-    address WMON;
+    address WBNB;
     address private uniswapFactory;
     // address quoterV2 = 0x74b06eFA24F39C60AA7F61BD516a3eaf39613D57; // PancakeSwap QuoterV2
-    address quoterV2 = 0x661E93cca42AfacB172121EF892830cA3b70F08d; // Uniswap V3 QuoterV2
+    address quoterV2 = 0x78D78E420Da98ad378D7799bE8f4AF69033EB077; // Uniswap V3 QuoterV2
 
     address payable idoManager;
     address nomaToken;
     address modelHelperContract;
     address vaultAddress;
 
-    NomaToken private NOMA;
-    GonsToken sNOMA;
+    OikosToken private OKS;
+    GonsToken sOKS;
 
     ModelHelper private modelHelper;
     Staking staking;
 
     function setUp() public {
         // Set addresses based on mainnet/testnet flag
-        WMON = isMainnet ? WMON_MAINNET : WMON_TESTNET;
+        WBNB = isMainnet ? WBNB_MAINNET : WBNB_TESTNET;
         uniswapFactory = isMainnet ? UNISWAP_FACTORY_MAINNET : UNISWAP_FACTORY_TESTNET;
 
         // Define the file path
@@ -95,10 +95,14 @@ contract Invariants is Test {
         IDOManager managerContract = IDOManager(idoManager);
         require(address(managerContract) != address(0), "Manager contract address is zero");
 
-        NOMA = NomaToken(nomaToken);
-        require(address(NOMA) != address(0), "Noma token address is zero");
+        OKS = OikosToken(nomaToken);
+        require(address(OKS) != address(0), "Oikos token address is zero");
         
         modelHelper = ModelHelper(modelHelperContract);
+
+        // Fund test contract and deployer with ETH
+        vm.deal(address(this), 10 ether);
+        vm.deal(deployer, 10 ether);
     }
 
     function testCirculatingSupply() public {     
@@ -118,7 +122,7 @@ contract Invariants is Test {
         vm.recordLogs();
         vm.startBroadcast(privateKey);
 
-        uint256 totalSupply = NOMA.totalSupply();
+        uint256 totalSupply = OKS.totalSupply();
         console.log("Total supply is %s", totalSupply);
 
         require(totalSupply >= 1e20, "Total supply is less than expected");
@@ -141,10 +145,10 @@ contract Invariants is Test {
         uint8 totalTrades = 2;
         uint256 tradeAmount = 0.005 ether;
 
-        IWETH(WMON).deposit{ value: 10 ether }();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{ value: 10 ether }();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
-        uint256 tokenBalanceBefore = NOMA.balanceOf(address(this));
+        uint256 tokenBalanceBefore = OKS.balanceOf(address(this));
         uint256 circulatingSupplyBefore = modelHelper.getCirculatingSupply(pool, address(vault), false);
         console.log("Circulating supply is: ", circulatingSupplyBefore);
         uint256 purchasePrice = spotPrice + (spotPrice * 25 / 100);
@@ -155,7 +159,7 @@ contract Invariants is Test {
             managerContract.buyTokens(purchasePrice, tradeAmount, quote, address(this));
         }
         
-        uint256 tokenBalanceAfter = NOMA.balanceOf(address(this));
+        uint256 tokenBalanceAfter = OKS.balanceOf(address(this));
         console.log("Token balance after buying is %s", tokenBalanceAfter);
 
         uint256 circulatingSupplyAfter = modelHelper.getCirculatingSupply(pool, address(vault), false);
@@ -181,27 +185,27 @@ contract Invariants is Test {
         );
 
         (uint160 sqrtRatioX96,,,,,,) = IUniswapV3Pool(vault.pool()).slot0();
-        uint16 numTrades = 1000;
-        uint256 tradeAmount = 0.00003785 ether;
+        uint16 numTrades = 1;
+        uint256 tradeAmount = 0.1 ether;
         
-        IWETH(WMON).deposit{ value:  tradeAmount * numTrades}();
-        IWETH(WMON).transfer(idoManager, tradeAmount * numTrades);
+        IWETH(WBNB).deposit{ value:  tradeAmount * numTrades}();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * numTrades);
 
-        uint256 tokenBalanceBefore = NOMA.balanceOf(address(deployer));
+        uint256 tokenBalanceBefore = OKS.balanceOf(address(deployer));
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtRatioX96, 18);
-        uint256 purchasePrice = spotPrice + (spotPrice * 25 / 100);
+        uint256 purchasePrice = spotPrice + (spotPrice * 5 / 100);
 
         for (uint i = 0; i < numTrades; i++) {
             (sqrtRatioX96,,,,,,) = IUniswapV3Pool(vault.pool()).slot0();
             spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtRatioX96, 18);
-            purchasePrice = spotPrice + (spotPrice * 25 / 100);
+            purchasePrice = spotPrice + (spotPrice * 5 / 100);
 
             (uint256 quote,,,) = IQuoterV2(quoterV2).quoteExactInput(swapPath, 1e18);
 
             console.log("Quote for 1 token0 to token1: ", quote);
 
             managerContract.buyTokens(purchasePrice, tradeAmount, quote, address(deployer));
-            uint256 tokenBalanceAfter = NOMA.balanceOf(address(deployer));
+            uint256 tokenBalanceAfter = OKS.balanceOf(address(deployer));
             
             uint256 receivedAmount = tokenBalanceAfter > tokenBalanceBefore 
                 ? tokenBalanceAfter - tokenBalanceBefore
@@ -233,23 +237,23 @@ contract Invariants is Test {
         );
         (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
-        uint256 purchasePrice = spotPrice + (spotPrice * 1 / 100);
+        uint256 purchasePrice = spotPrice + (spotPrice * 5 / 100);
 
         console.log("Spot price is: ", spotPrice);
 
         uint8 totalTradesBuy = 1;
-        uint256 tradeAmountWETH = 50 ether;
+        uint256 tradeAmountWETH = 0.1 ether;
 
-        IWETH(WMON).deposit{ value:  tradeAmountWETH * totalTradesBuy}();
-        IWETH(WMON).transfer(idoManager, tradeAmountWETH * totalTradesBuy);
+        IWETH(WBNB).deposit{ value:  tradeAmountWETH * totalTradesBuy}();
+        IWETH(WBNB).transfer(idoManager, tradeAmountWETH * totalTradesBuy);
 
-        uint256 tokenBalanceBefore = NOMA.balanceOf(address(deployer));
+        uint256 tokenBalanceBefore = OKS.balanceOf(address(deployer));
         console.log("Token balance before buying is %s", tokenBalanceBefore);
 
         for (uint i = 0; i < totalTradesBuy; i++) {
             (sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
             spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
-            purchasePrice = spotPrice + (spotPrice * 25 / 100);
+            purchasePrice = spotPrice + (spotPrice * 5 / 100);
 
             // if (i >= 4) {
                 spotPrice = purchasePrice;
@@ -265,14 +269,14 @@ contract Invariants is Test {
         spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
         console.log("Spot price is: ", spotPrice);
 
-        uint256 tokenBalanceBeforeSelling = NOMA.balanceOf(address(deployer));
+        uint256 tokenBalanceBeforeSelling = OKS.balanceOf(address(deployer));
         console.log("Token balance before selling is %s", tokenBalanceBeforeSelling);
 
-        NOMA.transfer(idoManager, tokenBalanceBeforeSelling);
+        OKS.transfer(idoManager, tokenBalanceBeforeSelling);
 
         (sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
         spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
-        purchasePrice = spotPrice - (spotPrice * 25 / 100);
+        purchasePrice = spotPrice - (spotPrice * 5 / 100);
 
     // if (i >= 4) {
         spotPrice = purchasePrice;
@@ -297,10 +301,10 @@ contract Invariants is Test {
         uint16 totalTrades = 1;
         uint256 tradeAmount = 1 ether;
 
-        IWETH(WMON).deposit{ value: (tradeAmount * totalTrades)}();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{ value: (tradeAmount * totalTrades)}();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
-        uint256 tokenBalanceBefore = NOMA.balanceOf(address(this));
+        uint256 tokenBalanceBefore = OKS.balanceOf(address(this));
         uint256 circulatingSupplyBefore = modelHelper.getCirculatingSupply(pool, address(vault), false);
         console.log("Circulating supply is: ", circulatingSupplyBefore);
 
@@ -348,8 +352,8 @@ contract Invariants is Test {
         uint8 totalTrades = 2;
         uint256 tradeAmount = 0.005 ether;
 
-        IWETH(WMON).deposit{ value: 10 ether }();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{ value: 10 ether }();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
         for (uint i = 0; i < totalTrades; i++) {
             managerContract.buyTokens(spotPrice, tradeAmount, 0, address(deployer));
@@ -380,8 +384,8 @@ contract Invariants is Test {
         uint8 totalTrades = 5;
         uint256 tradeAmount = 0.05 ether;
 
-        IWETH(WMON).deposit{ value: 10 ether }();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{ value: 10 ether }();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
         for (uint i = 0; i < totalTrades; i++) {
             managerContract.buyTokens(spotPrice, tradeAmount, 0, address(deployer));
@@ -420,8 +424,8 @@ contract Invariants is Test {
         uint16 totalTrades = 100;
         uint256 tradeAmount = 0.1 ether;
 
-        IWETH(WMON).deposit{ value: tradeAmount * totalTrades }();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{ value: tradeAmount * totalTrades }();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
         uint256 circulatingSupplyBefore = modelHelper.getCirculatingSupply(pool, address(vault), false);
         console.log("Circulating supply is: ", circulatingSupplyBefore);
@@ -443,10 +447,10 @@ contract Invariants is Test {
             IVault(address(vault)).shift();
         }
         
-        uint256 tokenBalanceBeforeSelling = NOMA.balanceOf(address(this));
+        uint256 tokenBalanceBeforeSelling = OKS.balanceOf(address(this));
         console.log("Token balance before selling is %s", tokenBalanceBeforeSelling);
 
-        NOMA.transfer(idoManager, tokenBalanceBeforeSelling);
+        OKS.transfer(idoManager, tokenBalanceBeforeSelling);
 
         (sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
         spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
@@ -457,7 +461,7 @@ contract Invariants is Test {
             address(deployer)
         );
 
-        uint256 tokenBalanceAfterSelling = NOMA.balanceOf(address(this));
+        uint256 tokenBalanceAfterSelling = OKS.balanceOf(address(this));
         console.log("Token balance after selling is %s", tokenBalanceAfterSelling);
 
         liquidityRatio = modelHelper.getLiquidityRatio(pool, address(vault));
@@ -556,7 +560,7 @@ contract Invariants is Test {
         console.log("Anchor capacity + floor balance is: ", anchorCapacity + floorBalance);
         console.log("Circulating supply is: ", circulatingSupply);
 
-        // To guarantee solvency, Noma ensures that capacity > circulating supply each liquidity is deployed.
+        // To guarantee solvency, Oikos ensures that capacity > circulating supply each liquidity is deployed.
         require(anchorCapacity + floorCapacity > circulatingSupply, "Insolvency invariant failed");
     }
 

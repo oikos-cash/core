@@ -4,7 +4,12 @@ out = "out"
 libs = ["lib"]
 fs_permissions = [{ access = "read", path = "./"}]
 auto_detect_remappings = false
-solc_version="0.8.23"
+solc_version = "0.8.23"
+evm_version = "shanghai"
+optimizer = true
+optimizer_runs = 100
+bytecode_hash = "ipfs" # or "none"
+#via_ir = true  # Required to avoid stack-too-deep errors in complex contracts
 
 remappings = [
     "ds-test/=lib/forge-std/lib/ds-test/src/",
@@ -19,3 +24,10 @@ remappings = [
     "v3-periphery/=lib/v3-periphery/contracts/",
     "abdk/=lib/abdk-libraries-solidity"
 ]
+
+# Invariant testing configuration
+[invariant]
+runs = 256          # Number of invariant test runs
+depth = 50          # Call sequence depth
+fail_on_revert = false
+shrink_run_limit = 2500

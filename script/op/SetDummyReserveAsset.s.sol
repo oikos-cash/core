@@ -24,12 +24,12 @@ contract DeployFactory is Script {
 
         vm.startBroadcast(privateKey);
 
-        resolver = Resolver(0xe4411394A43AB86f486C85164deB6E6Ac83E83DD); // Replace with actual resolver address
+        resolver = Resolver(0x91377381456865e474a33FF157444f26B0645fD4); // Replace with actual resolver address
 
         WETH9 weth = new WETH9(deployer);
 
         expectedAddressesInResolver.push(
-            ContractInfo("WMON", address(weth))
+            ContractInfo("OikosFactory", address(0x525E38Ae23716e169086E6B8b474AB054E3734c9))
         );
 
         configureResolver();

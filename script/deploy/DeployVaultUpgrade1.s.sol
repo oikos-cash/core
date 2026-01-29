@@ -5,18 +5,21 @@ import "forge-std/Script.sol";
 import { stdJson } from "forge-std/StdJson.sol";
 import { Resolver } from "../../src/Resolver.sol";
 import { VaultDeployParams, VaultDescription, ProtocolParameters, PresaleProtocolParams } from "../../src/types/Types.sol";
-import { 
-    VaultUpgrade, 
-    VaultUpgradeStep1, 
+import {
+    VaultUpgrade,
+    VaultUpgradeStep1,
     VaultUpgradeStep2,
     VaultUpgradeStep3,
     VaultUpgradeStep4,
     VaultUpgradeStep5
 } from "../../src/vault/init/VaultUpgrade.sol";
-import { 
+import {
     VaultInit
 } from "../../src/vault/init/VaultInit.sol";
 import { Utils } from "../../src/libraries/Utils.sol";
+import { ExtVaultShift } from "../../src/vault/ExtVaultShift.sol";
+import { ExtVaultLending } from "../../src/vault/ExtVaultLending.sol";
+import { ExtVaultLiquidation } from "../../src/vault/ExtVaultLiquidation.sol";
 
 struct ContractInfo {
     string name;
@@ -42,14 +45,14 @@ contract DeployVaultUpgrade1 is Script {
     Resolver private resolver;
 
     // Constants
-    address WMON_monad_mainnet = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
-    address uniswapFactory_monad_mainnet = 0x204FAca1764B154221e35c0d20aBb3c525710498;
-    address pancakeSwapFactory__monad_mainnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
+    address WBNB_bsc_mainnet = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
+    address uniswapFactory_bsc_mainnet = 0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7;
+    address pancakeSwapFactory__bsc_mainnet = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
 
-    address WMON_monad_testnet = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
-    address uniswapFactory_monad_testnet = 0x961235a9020B05C44DF1026D956D1F4D78014276;
-    address pancakeSwapFactory__monad_testnet = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
-    address WMON = isMainnet ? WMON_monad_mainnet : WMON_monad_testnet;
+    address WBNB_bsc_testnet = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    address uniswapFactory_bsc_testnet = 0x961235a9020B05C44DF1026D956D1F4D78014276;
+    address pancakeSwapFactory__bsc_testnet = 0x3b7838D96Fc18AD1972aFa17574686be79C50040;
+    address WBNB = isMainnet ? WBNB_bsc_mainnet : WBNB_bsc_testnet;
 
     function run() public {  
         vm.startBroadcast(privateKey);
@@ -60,7 +63,7 @@ contract DeployVaultUpgrade1 is Script {
 
         // Read the JSON file
         string memory json = vm.readFile(path);
-        string memory networkId = isChainFork ? "1337" : isMainnet ? "143" : "10143"; 
+        string memory networkId = isChainFork ? "1337" : isMainnet ? "56" : "10143"; 
 
         // Parse the data for network ID 
         bytes memory data = vm.parseJson(json, string.concat(string("."), networkId));
@@ -73,16 +76,32 @@ contract DeployVaultUpgrade1 is Script {
 
         resolver = Resolver(addresses.Resolver);
 
-        VaultUpgrade vaultUpgrade = new VaultUpgrade(deployer, address(addresses.Factory));
+        // Deploy facets first (pre-deployed pattern to stay under 24KB limit)
+        ExtVaultShift facetShift = new ExtVaultShift();
+        ExtVaultLending facetLending = new ExtVaultLending();
+        ExtVaultLiquidation facetLiquidation = new ExtVaultLiquidation();
+
+        console2.log("ExtVaultShift deployed at:", address(facetShift));
+        console2.log("ExtVaultLending deployed at:", address(facetLending));
+        console2.log("ExtVaultLiquidation deployed at:", address(facetLiquidation));
+
+        // Deploy VaultUpgrade with pre-deployed facet addresses
+        VaultUpgrade vaultUpgrade = new VaultUpgrade(
+            deployer,
+            address(addresses.Factory),
+            address(facetShift),
+            address(facetLending),
+            address(facetLiquidation)
+        );
         VaultInit vaultStep1 = new VaultInit(deployer, address(addresses.Factory));
-    
+
         VaultUpgradeStep1 vaultUpgradeStep1 = new VaultUpgradeStep1(deployer, address(addresses.Factory));
         VaultUpgradeStep2 vaultUpgradeStep2 = new VaultUpgradeStep2(deployer, address(addresses.Factory));
-    
+
         expectedAddressesInResolver.push(
             ContractInfo("VaultUpgrade", address(vaultUpgrade))
         );
-        
+
         expectedAddressesInResolver.push(
             ContractInfo("VaultStep1", address(vaultStep1))
         );
@@ -93,6 +112,17 @@ contract DeployVaultUpgrade1 is Script {
 
         expectedAddressesInResolver.push(
             ContractInfo("VaultUpgradeStep2", address(vaultUpgradeStep2))
+        );
+
+        // Store facet addresses in resolver for VaultFinalize
+        expectedAddressesInResolver.push(
+            ContractInfo("ExtVaultShift", address(facetShift))
+        );
+        expectedAddressesInResolver.push(
+            ContractInfo("ExtVaultLending", address(facetLending))
+        );
+        expectedAddressesInResolver.push(
+            ContractInfo("ExtVaultLiquidation", address(facetLiquidation))
         );
 
         // Configure resolver

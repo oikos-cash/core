@@ -27,7 +27,7 @@ contract TestQuoter is Test {
 
     address payable idoManager;
     address vaultAddress;
-    address quoterV2 = 0x661E93cca42AfacB172121EF892830cA3b70F08d; // Uniswap V3 QuoterV2
+    address quoterV2 = 0x78D78E420Da98ad378D7799bE8f4AF69033EB077; // Uniswap V3 QuoterV2
     // address quoterV2 = 0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997; // PancakeSwap QuoterV2
     IUniswapV3Pool pool;
 

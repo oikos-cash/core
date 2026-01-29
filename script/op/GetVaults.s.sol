@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
-import {NomaFactory} from "../../src/factory/NomaFactory.sol";
+import {OikosFactory} from "../../src/factory/OikosFactory.sol";
 
 import {VaultDescription} from "../../src/types/Types.sol";
 
@@ -24,7 +24,7 @@ contract GetVaults is Script {
     function run() public {
         vm.startBroadcast(privateKey);
         
-        NomaFactory factory = NomaFactory(0x2c6ab111bcdDAC86B5e42990F1BC05F8e8Aa63cA);
+        OikosFactory factory = OikosFactory(0x2c6ab111bcdDAC86B5e42990F1BC05F8e8Aa63cA);
 
         address[] memory vaults = factory.getVaults(deployerAddress);
 

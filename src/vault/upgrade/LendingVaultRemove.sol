@@ -18,7 +18,7 @@ import {
 } from "../../types/Types.sol";
 import "../../errors/Errors.sol";
 
-interface INomaFactory {
+interface IOikosFactory {
     function deferredDeploy(address deployer) external;
     function mintTokens(address to, uint256 amount) external;
     function burnFor(address from, uint256 amount) external;

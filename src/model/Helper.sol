@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// ███╗   ██╗ ██████╗ ███╗   ███╗ █████╗                               
-// ████╗  ██║██╔═══██╗████╗ ████║██╔══██╗                              
-// ██╔██╗ ██║██║   ██║██╔████╔██║███████║                              
-// ██║╚██╗██║██║   ██║██║╚██╔╝██║██╔══██║                              
-// ██║ ╚████║╚██████╔╝██║ ╚═╝ ██║██║  ██║                              
-// ╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝                              
-                                                                    
-// ██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗     
-// ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║     
-// ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗
-// ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
+//  ██████╗ ██╗██╗  ██╗ ██████╗ ███████╗
+// ██╔═══██╗██║██║ ██╔╝██╔═══██╗██╔════╝
+// ██║   ██║██║█████╔╝ ██║   ██║███████╗
+// ██║   ██║██║██╔═██╗ ██║   ██║╚════██║
+// ╚██████╔╝██║██║  ██╗╚██████╔╝███████║
+//  ╚═════╝ ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝                                 
+                                     
+
 
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
 import {LiquidityAmounts} from "v3-periphery/libraries/LiquidityAmounts.sol";
@@ -60,6 +55,12 @@ contract ModelHelper {
             decimals);
             
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtRatioX96, decimals);
+
+        // Prevent division by zero when price is at extreme minimum
+        if (spotPrice == 0) {
+            return type(uint256).max;
+        }
+                
         liquidityRatio = DecimalMath.divideDecimal(anchorUpperPrice, spotPrice);
     }
 
@@ -173,8 +174,26 @@ contract ModelHelper {
         VaultInfo memory vaultInfo
     ) {
         LiquidityPosition[3] memory positions = IVault(vault).getPositions();
+
+        // Guard for empty positions (fresh deploy before liquidity is set)
+        // When isFreshDeploy=false, positions may not be initialized yet
+        bool positionsEmpty = positions[0].liquidity == 0 &&
+                              positions[1].liquidity == 0 &&
+                              positions[2].liquidity == 0 &&
+                              positions[0].lowerTick == 0 &&
+                              positions[0].upperTick == 0;
+
+        if (positionsEmpty) {
+            // Return minimal VaultInfo for vaults without initialized positions
+            (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
+            vaultInfo.spotPriceX96 = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
+            vaultInfo.token0 = tokenInfo.token0;
+            vaultInfo.token1 = tokenInfo.token1;
+            return vaultInfo;
+        }
+
         (uint160 sqrtPriceX96,,,,,,) = IUniswapV3Pool(pool).slot0();
-        
+
         vaultInfo.liquidityRatio = getLiquidityRatio(pool, vault);
         vaultInfo.circulatingSupply = getCirculatingSupply(pool, vault, false);
         vaultInfo.spotPriceX96 = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
@@ -200,14 +219,7 @@ contract ModelHelper {
         LiquidityPosition[3] memory positions = IVault(vault).getPositions();
         uint256 totalSupply = ERC20(address(IUniswapV3Pool(pool).token0())).totalSupply();
 
-        (,, uint256 amount0CurrentFloor, ) = Underlying.getUnderlyingBalances(pool, vault, positions[0]);
-        (,, uint256 amount0CurrentAnchor, ) = Underlying.getUnderlyingBalances(pool, vault, positions[1]);
-        (,, uint256 amount0CurrentDiscovery, ) = Underlying.getUnderlyingBalances(pool, vault, positions[2]);
-
         uint256 protocolUnusedBalanceToken0 = ERC20(address(IUniswapV3Pool(pool).token0())).balanceOf(vault);
-        
-        address stakingContract = IVault(vault).getStakingContract();
-
         (uint160 sqrtRatioX96,,,,,,) = IUniswapV3Pool(pool).slot0();
 
         uint256 feesPosition0Token0 = Underlying
@@ -216,26 +228,44 @@ contract ModelHelper {
             vault, 
             pool, 
             true, 
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96)
-        );
-
-        uint256 circulatingSupply = (
-            totalSupply - 
-            (
-                amount0CurrentFloor + 
-                amount0CurrentAnchor + 
-                amount0CurrentDiscovery + 
-                protocolUnusedBalanceToken0 + 
-                (includeStaked ? 
-                stakingContract != address(0) ? 
-                ERC20(address(IUniswapV3Pool(pool).token0())).balanceOf(stakingContract) : 0 : 0) + 
-                IVault(vault).getCollateralAmount() +
-                feesPosition0Token0
+            TickMath
+            .getTickAtSqrtRatio(
+                sqrtRatioX96
             )
         );
 
-        return circulatingSupply;
+        uint256 lockedSupply = (
+            totalUnderlyingBalance(pool, vault) +
+            protocolUnusedBalanceToken0 +
+            (includeStaked ?
+            IVault(vault).getStakingContract() != address(0) ?
+            ERC20(address(IUniswapV3Pool(pool).token0())).balanceOf(IVault(vault).getStakingContract()) : 0 : 0) +
+            IVault(vault).getCollateralAmount() +
+            feesPosition0Token0
+        );
+
+        // Prevent underflow - if locked > total, return 0
+        if (lockedSupply >= totalSupply) {
+            return 0;
+        }
+
+        return totalSupply - lockedSupply;
     } 
+
+    function totalUnderlyingBalance(
+        address pool,
+        address vault
+    ) public view returns (uint256 totalToken0) {
+        LiquidityPosition[3] memory positions = IVault(vault).getPositions();
+
+        (,, uint256 amount0CurrentFloor, ) = Underlying.getUnderlyingBalances(pool, vault, positions[0]);
+        (,, uint256 amount0CurrentAnchor, ) = Underlying.getUnderlyingBalances(pool, vault, positions[1]);
+        (,, uint256 amount0CurrentDiscovery, ) = Underlying.getUnderlyingBalances(pool, vault, positions[2]);
+
+        return (
+            amount0CurrentFloor + amount0CurrentAnchor + amount0CurrentDiscovery
+        );
+    }
 
     /**
      * @notice Retrieves the total supply of a token in the pool.
@@ -318,7 +348,7 @@ contract ModelHelper {
         uint256 anchorCapacity = vaultInfo.anchorCapacity;
         uint256 floorCapacity = vaultInfo.floorCapacity;
         
-        // To guarantee solvency, Noma ensures that capacity > circulating supply each liquidity is deployed.
+        // To guarantee solvency, Oikos ensures that capacity > circulating supply each liquidity is deployed.
         if (anchorCapacity + floorCapacity <= circulatingSupply) {
             revert InsolvencyInvariant();
         }

@@ -20,7 +20,6 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IUniswapV3Pool } from "v3-core/interfaces/IUniswapV3Pool.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { TickMath } from "v3-core/libraries/TickMath.sol";
-import "../libraries/TickMathExtra.sol";
 import { IModelHelper } from "../interfaces/IModelHelper.sol";
 import { LiquidityDeployer } from "../libraries/LiquidityDeployer.sol";
 import { Conversions } from "../libraries/Conversions.sol";
@@ -28,13 +27,20 @@ import { Uniswap } from "../libraries/Uniswap.sol";
 import { LiquidityOps } from "../libraries/LiquidityOps.sol";
 import { IDeployer } from "../interfaces/IDeployer.sol";
 import "../errors/Errors.sol";
+import "../libraries/TickMathExtra.sol";
 
 interface ILendingVault {
     function loanLTV(address who) external view returns (uint256 ltv1e18);
     function paybackLoan(address who, uint256 amount, bool isSelfRepaying) external;
+    function getCollateralAmount() external view returns (uint256 collateralAmount);
 }
 
-interface INomaFactory {
+interface IOldVault {
+    function migrateLoan(address who) external;
+    function getActiveLoan(address who) external view returns (uint256, uint256, uint256, uint256, uint256);
+}
+
+interface IOikosFactory {
     function deferredDeploy(address deployer) external;
     function mintTokens(address to, uint256 amount) external;
     function burnFor(address from, uint256 amount) external;
@@ -173,108 +179,77 @@ contract LendingOpsVault {
         return (count, totalRepaid, nextIndex);
     }
 
-    function bumpFloor(uint256 ethAmount) public onlyManagerOrMultiSig {
-        if (!_v.initialized) revert NotInitialized();
+    function hasExistingLoan() public view returns (bool) {
+        // hardcoded OKS vault addresses for migration (VAULT2 excluded - lost control)
+        address vault1 = 0x10229DC66ac45b6Ecd2c71ca480EDD013dE701aD;
+        address vault3 = 0x1E9AEF03ccD42c9531e404939f45d3A4e922ED9D;
+        uint256 borrowAmount = 0;
 
-        uint256 currentLiquidityRatio = IModelHelper(_v.modelHelper)
-        .getLiquidityRatio(address(_v.pool), address(this));
+        address v = _v.existingVault;
+        if (v == address(0)) {
+            revert noExistingVault();
+        } else {
 
-        if (currentLiquidityRatio < 95e16 || currentLiquidityRatio > 105e16) {
-            revert LiquidityOpRequired();
+            (borrowAmount,,,,) = IVault(v).getActiveLoan(msg.sender);
+
+            if (borrowAmount > 0) {
+                return true;
+            }
+
+            (uint256 borrowAmount2,,,,) = IVault(vault3).getActiveLoan(msg.sender);
+
+            if (borrowAmount2 > 0) {
+                borrowAmount = borrowAmount2;
+            }
         }
 
-        LiquidityPosition[3] memory positions = [
-            _v.floorPosition, 
-            _v.anchorPosition, 
-            _v.discoveryPosition
-        ];
+        return borrowAmount > 0;
+    }
 
+    function migrateLoan(address vault, address who) public onlyInternalCalls {
+        address existingVault = _v.existingVault;
+        if (keccak256(bytes(IERC20Metadata(_v.pool.token0()).symbol())) ==
+            keccak256(bytes("OKS"))) {
+            // hardcoded OKS vault addresses for migration (VAULT2 excluded - lost control)
+            address vault1 = 0x10229DC66ac45b6Ecd2c71ca480EDD013dE701aD;
+            address vault3 = 0x1E9AEF03ccD42c9531e404939f45d3A4e922ED9D;
+            if (vault == vault1) existingVault = vault1;
+            else if (vault == vault3) existingVault = vault3;
+        }
         (
-            uint256 floorToken0Balance,
-            uint256 floorToken1Balance,
-            uint256 anchorToken1Balance,
-            uint256 discoveryToken0Balance
-        ) = getUnderlyingBalances();
+            uint256 borrowAmount,
+            uint256 collateralAmount,
+            uint256 fees,
+            uint256 expiry,
+            uint256 duration
+        ) = IOldVault(existingVault)
+        .getActiveLoan(who);
 
-        Uniswap.collect(
-            address(_v.pool),
-            address(this), 
-            positions[0].lowerTick, 
-            positions[0].upperTick
-        );
+        if (borrowAmount > 0) {
+            // Prevent overwriting existing loan on new vault
+            if (_v.loanPositions[who].borrowAmount > 0) revert ActiveLoan();
 
-        // Collect anchor liquidity
-        Uniswap.collect(
-            address(_v.pool),
-            address(this), 
-            positions[1].lowerTick, 
-            positions[1].upperTick
-        );
+            IOldVault(existingVault).migrateLoan(who);
 
-        // Collect discovery liquidity
-        Uniswap.collect(
-            address(_v.pool),
-            address(this), 
-            positions[2].lowerTick, 
-            positions[2].upperTick
-        );
-        
-        uint256 circulatingSupply = IModelHelper(_v.modelHelper)
-        .getCirculatingSupply(address(_v.pool), address(this), false);
+            // forward collateral to token repo
+            IERC20(_v.pool.token0()).safeTransfer(_v.tokenRepo, collateralAmount);
 
-        uint256 newFloorPrice = Utils
-        .computeNewFloorPrice(
-            floorToken1Balance + ethAmount,
-            circulatingSupply
-        );
+            LoanPosition memory loanPosition = LoanPosition({
+                borrowAmount: borrowAmount,
+                collateralAmount: collateralAmount,
+                fees: fees,
+                expiry: expiry,
+                duration: duration
+            });
 
-        int24 newFloorLowerTick = Conversions
-        .priceToTick(
-            int256(newFloorPrice),
-            _v.tickSpacing,
-            IERC20Metadata(_v.pool.token0()).decimals()
-        );
+            _v.collateralAmount += collateralAmount;
+            _v.loanPositions[who] = loanPosition;
+            ++_v.totalLoansPerUser[who];
+            _v.loanAddresses.push(who);
 
-        newFloorLowerTick = TickMathExtra.ceilToSpacing(newFloorLowerTick, _v.tickSpacing);
-
-        if (newFloorLowerTick < positions[0].lowerTick) {
-            revert InvalidTick();
+            // Should fees accrue from old loans?
+            _v.totalInterest += fees;
         }
-
-        positions[0].lowerTick = newFloorLowerTick;
-        positions[0].upperTick = newFloorLowerTick + _v.tickSpacing;
-        
-        // LiquidityPosition memory newFloorPos = LiquidityDeployer
-        // .reDeployFloor(
-        //     address(_v.pool), 
-        //     address(this), 
-        //     floorToken0Balance, 
-        //     floorToken1Balance + ethAmount, 
-        //     positions
-        // );     
-
-        // LiquidityPosition memory newAnchorPosition = 
-        // _redeployAnchor(
-        //     positions,
-        //     ethAmount,
-        //     anchorToken1Balance,
-        //     true
-        // );
-
-        // LiquidityPosition memory newDiscoveryPosition = 
-        // _redeployDiscovery(
-        //     positions, 
-        //     discoveryToken0Balance
-        // );
-
-        // positions = [
-        //     newFloorPos, 
-        //     newAnchorPosition, 
-        //     newDiscoveryPosition
-        // ];
-
-        // _updatePositions(positions);
-        // IModelHelper(_v.modelHelper).enforceSolvencyInvariant(address(this));
     }
 
     function _redeployAnchor(
@@ -376,17 +351,44 @@ contract LendingOpsVault {
         _v.anchorPosition = _positions[1];
         _v.discoveryPosition = _positions[2];
     }
-    
+
+    /**
+     * @notice Returns the address of an existing vault used for loan migration.
+     * @return The existing vault address, or address(0) if none.
+     */
+    function existingVault() public view returns (address) {
+        return _v.existingVault;
+    }
+
+    /**
+     * @notice Retrieves the total collateral amount.
+     * @return collateralAmount The total collateral amount.
+     */
+    // function getCollateralAmount() public view returns (uint256 collateralAmount) {
+    //     if (_v.existingVault != address(0)) {
+    //         collateralAmount = ILendingVault(_v.existingVault).getCollateralAmount();
+    //     }
+
+    //     if (keccak256(bytes(IERC20Metadata(_v.pool.token0()).symbol())) ==
+    //         keccak256(bytes("OKS"))) {
+    //         uint256 oldCollateral = IERC20(_v.tokenInfo.token0).balanceOf(0x681045F67b809B0e5C02857d821188e5b7b43Ab4);
+
+    //         collateralAmount += oldCollateral;                
+    //     }
+
+    //     collateralAmount += IERC20(_v.tokenInfo.token0).balanceOf(_v.tokenRepo);
+    // }
+
     /**
      * @notice Modifier to restrict access to internal calls.
      */
     modifier onlyInternalCalls() {
-        if (msg.sender != _v.factory && msg.sender != address(this)) revert OnlyInternalCalls();
-        _;        
+        if (msg.sender != IVault(address(this)).factory() && msg.sender != address(this)) revert OnlyInternalCalls();
+        _;
     }
 
     modifier onlyManagerOrMultiSig() {
-        address multiSig = INomaFactory(_v.factory).teamMultiSig();
+        address multiSig = IOikosFactory(IVault(address(this)).factory()).teamMultiSig();
         if (msg.sender != _v.manager && msg.sender != multiSig) {
             revert NotAuthorized();
         }
@@ -398,9 +400,14 @@ contract LendingOpsVault {
      * @return selectors An array of function selectors.
      */
     function getFunctionSelectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](2);
+        bytes4[] memory selectors = new bytes4[](4);
         selectors[0] = bytes4(keccak256(bytes("vaultSelfRepayLoans(uint256,uint256,uint256)")));
-        selectors[1] = bytes4(keccak256(bytes("bumpFloor(uint256)")));
+        selectors[1] = bytes4(keccak256(bytes("hasExistingLoan()")));
+        // migrateLoan(address,address) is internal-only, actual signature matches the function
+        selectors[2] = bytes4(keccak256(bytes("migrateLoan(address,address)")));
+        selectors[3] = bytes4(keccak256(bytes("existingVault()")));
+        // selectors[4] = bytes4(keccak256(bytes("getCollateralAmount()")));
+
         return selectors;
     }
 }        

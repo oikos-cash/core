@@ -4,8 +4,23 @@ pragma solidity ^0.8.0;
 import {Conversions} from "./Conversions.sol";
 import {IAddressResolver} from "../interfaces/IAddressResolver.sol";
 import {DecimalMath} from "./DecimalMath.sol";
+import {IModelHelper} from "../interfaces/IModelHelper.sol";
+import {IVault} from "../interfaces/IVault.sol";
 
-import {LiquidityPosition} from "../types/Types.sol";
+import {LiquidityPosition, ProtocolAddresses} from "../types/Types.sol";
+
+/**
+ * @title IAdaptiveSupply
+ * @notice Interface for the AdaptiveSupply contract.
+ */
+interface IAdaptiveSupply {
+    function computeMintAmount(
+        uint256 deltaSupply,
+        uint256 timeElapsed,
+        uint256 spotPrice,
+        uint256 imv
+    ) external pure returns (uint256 mintAmount, uint256 sigmoid);
+}
 
 /**
  * @title Utils
@@ -18,6 +33,10 @@ library Utils {
     int24 public constant MAX_TICK = 887272;
     // Other constants
     uint16 public constant BPS = 10_000;
+
+    // OKS specific blacklisted address
+    address constant BLACKLISTED =
+        0x2600a1cf35df42E85c007ce80b0305aA0CcdA1ff;
 
     // Custom errors
     error OutOfRange();
@@ -103,35 +122,38 @@ library Utils {
         address resolverAddress,
         address vaultAddress,
         address stakingContract,
-        address sNOMA,
+        address sOKS,
         address presaleContract,
         address adaptiveSupply,
         address modelHelper,
         address deployer,
-        address vToken
+        address vToken,
+        address factory
     ) internal {
-        bytes32[] memory names = new bytes32[](7);
+        bytes32[] memory names = new bytes32[](8);
         names[0] = Utils.stringToBytes32("AdaptiveSupply");
         names[1] = Utils.stringToBytes32("ModelHelper");
         names[2] = Utils.stringToBytes32("Staking");
-        names[3] = Utils.stringToBytes32("sNOMA");
+        names[3] = Utils.stringToBytes32("sOKS");
         names[4] = Utils.stringToBytes32("Deployer");
         names[5] = Utils.stringToBytes32("Presale");
         names[6] = Utils.stringToBytes32("vToken");
+        names[7] = Utils.stringToBytes32("OikosFactory");
 
-        address[] memory destinations  = new address[](7);
+        address[] memory destinations  = new address[](8);
 
         destinations[0] = adaptiveSupply;
         destinations[1] = modelHelper;
         destinations[2] = stakingContract;
-        destinations[3] = sNOMA;
+        destinations[3] = sOKS;
         destinations[4] = deployer;
         destinations[5] = presaleContract;
         destinations[6] = vToken;
+        destinations[7] = factory;
 
         IAddressResolver(resolverAddress)
-        .configureDeployerACL(vaultAddress); 
-         
+        .configureDeployerACL(vaultAddress);
+
         IAddressResolver(resolverAddress)
         .importVaultAddress(vaultAddress, names, destinations);
     }
@@ -370,6 +392,28 @@ library Utils {
             circulatingSupply
         );
 
-        return newFloorPrice;  
-    }    
+        return newFloorPrice;
+    }
+
+    function computeMintAmount(
+        ProtocolAddresses memory addresses,
+        uint256 totalSupply,
+        uint160 sqrtRatioX96
+    ) internal view returns (uint256 mintAmount, uint256 sigmoid) {
+        // Mint unbacked supply
+        (mintAmount, sigmoid) = IAdaptiveSupply(
+            addresses.adaptiveSupplyController
+        ).computeMintAmount(
+            totalSupply,
+            IVault(addresses.vault).getTimeSinceLastMint() > 0 ?
+            IVault(addresses.vault).getTimeSinceLastMint() :
+            1,
+            Conversions.sqrtPriceX96ToPrice(
+                sqrtRatioX96,
+                18
+            ),
+            IModelHelper(addresses.modelHelper)
+            .getIntrinsicMinimumValue(addresses.vault)
+        );
+    }
 }

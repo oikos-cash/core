@@ -16,7 +16,7 @@ contract Migration is Ownable {
     using SafeTransferLib for ERC20;
 
     IModelHelper public immutable modelHelper;
-    ERC20        public immutable nomaToken;
+    ERC20        public immutable oikosToken;
     address      public immutable vault;
     address      public immutable firstHolder;
     uint256      public immutable initialIMV;
@@ -32,7 +32,7 @@ contract Migration is Ownable {
 
     constructor(
         address _modelHelper,
-        address _nomaToken,
+        address _oikosToken,
         address _vault,
         uint256 _initialIMV,
         uint256 _duration,
@@ -40,14 +40,14 @@ contract Migration is Ownable {
         uint256[22] memory balances
     ) Ownable(msg.sender) {
         if (_modelHelper == address(0)) revert InvalidHelper();
-        if (_nomaToken == address(0)) revert InvalidToken();
+        if (_oikosToken == address(0)) revert InvalidToken();
         if (_vault == address(0)) revert InvalidVault();
         if (_initialIMV == 0) revert IMVMustBeGreaterThanZero();
         if (_duration == 0) revert DurationMustBeGreaterThanZero();
         if (holders.length != balances.length || holders.length == 0) revert HoldersBalancesMismatchOrEmpty();
 
         modelHelper         = IModelHelper(_modelHelper);
-        nomaToken          = ERC20(_nomaToken);
+        oikosToken          = ERC20(_oikosToken);
         vault               = _vault;
         initialIMV          = _initialIMV;
         migrationEnd        = block.timestamp + _duration;
@@ -70,7 +70,7 @@ contract Migration is Ownable {
             uint256 fhBal = initialBalanceOf[firstHolder];
             withdrawnOf[firstHolder] = fhBal;
             totalWithdrawn          += fhBal;
-            nomaToken.safeTransfer(firstHolder, fhBal);
+            oikosToken.safeTransfer(firstHolder, fhBal);
             emit Withdrawn(firstHolder, fhBal);
         }
 
@@ -97,7 +97,7 @@ contract Migration is Ownable {
         withdrawnOf[msg.sender] += available;
         totalWithdrawn          += available;
 
-        nomaToken.safeTransfer(msg.sender, available);
+        oikosToken.safeTransfer(msg.sender, available);
         emit Withdrawn(msg.sender, available);
     }
 
@@ -120,7 +120,7 @@ contract Migration is Ownable {
         if (balance == 0) revert NoTokens();
 
         uint256 amount = balance;
-        if (tokenAddress == address(nomaToken)) {
+        if (tokenAddress == address(oikosToken)) {
             uint256 reserved = totalInitialBalance - totalWithdrawn;
             if (balance <= reserved) revert NoExcessTokens();
             amount = balance - reserved;

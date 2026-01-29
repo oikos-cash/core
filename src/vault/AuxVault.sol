@@ -8,10 +8,11 @@ import {
     LiquidityType, 
     LiquidityPosition,
     ProtocolAddresses, 
-    LiquidityInternalPars, 
     ReferralEntity, 
     ProtocolParameters, 
-    CreatorFacingParameters 
+    CreatorFacingParameters,
+    DeployLiquidityParams,
+    AmountsToMint
 } from "../types/Types.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Uniswap } from "../libraries/Uniswap.sol";
@@ -21,11 +22,13 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { TickMath } from "v3-core/libraries/TickMath.sol";
 import { LiquidityOps } from "../libraries/LiquidityOps.sol";
 import {IAddressResolver} from "../interfaces/IAddressResolver.sol";
+import {IModelHelper} from "../interfaces/IModelHelper.sol";
 import {Conversions} from "../libraries/Conversions.sol";
+import "../libraries/LiquidityDeployer.sol";
 import "../libraries/TickMathExtra.sol";
 import "../errors/Errors.sol";
 
-interface INomaFactory {
+interface IOikosFactory {
     function deferredDeploy(address deployer) external;
     function mintTokens(address to, uint256 amount) external;
     function burnFor(address from, uint256 amount) external;
@@ -40,10 +43,6 @@ interface IStakingRewards {
 interface ILendingVault {
     function loanLTV(address who) external view returns (uint256 ltv1e18);
     function vaultSelfRepayLoans(uint256 fundsToPull,uint256 start,uint256 limit) external returns (uint256 totalLoans, uint256 collateralToReturn);
-}
-
-interface IVaultExt {
-    function mintTokens(address to, uint256 amount) external returns (bool);
 }
 
 event LoanRepaidOnBehalf(address indexed who, uint256 amount, uint256 collateralReleased);
@@ -122,7 +121,7 @@ contract AuxVault {
         
         _v.timeLastMinted = block.timestamp;
 
-        INomaFactory(_v.factory)
+        IOikosFactory(_v.factory)
         .mintTokens(
             to,
             amount
@@ -136,14 +135,15 @@ contract AuxVault {
      * @param amount The amount of tokens to burn.
      */
     function burnTokens(
+        address to,
         uint256 amount
     ) public onlyInternalCalls {
 
         IERC20(_v.pool.token0()).approve(address(_v.factory), amount);
 
-        INomaFactory(_v.factory)
+        IOikosFactory(_v.factory)
         .burnFor(
-            address(this),
+            to,
             amount
         );
     }
@@ -204,6 +204,87 @@ contract AuxVault {
         emit LoanRepaidOnBehalf(msg.sender, totalRepaid, collateralToReturn);
     }
 
+    function setLiquidity(
+        LiquidityPosition[3] memory positions,
+        uint256 amount1Floor,
+        uint256 amount1Anchor
+    ) public onlyMultiSig {
+
+        LiquidityPosition memory newFloor = LiquidityDeployer
+        .deployPositionRaw(
+            DeployLiquidityParams({
+                pool: address(_v.pool),
+                receiver: address(this),
+                bips: 0,
+                lowerTick: positions[0].lowerTick,
+                upperTick: positions[0].upperTick,
+                tickSpacing: positions[0].tickSpacing,
+                liquidityType: LiquidityType.Floor,
+                amounts: AmountsToMint({
+                    amount0: 0,
+                    amount1: amount1Floor
+                })
+            })            
+        );
+
+        uint256 amount0Anchor = Uniswap
+        .computeAmount0ForAmount1(
+            LiquidityPosition({
+                lowerTick: positions[1].lowerTick,
+                upperTick: positions[1].upperTick,
+                liquidity: 0,
+                price: 0,
+                tickSpacing: positions[1].tickSpacing,
+                liquidityType: LiquidityType.Anchor
+            }), 
+            amount1Anchor
+        );
+
+        LiquidityPosition memory newAnchor = LiquidityDeployer
+        .deployPositionRaw(
+            DeployLiquidityParams({
+                pool: address(_v.pool),
+                receiver: address(this),
+                bips: 0,
+                lowerTick: positions[1].lowerTick,
+                upperTick: positions[1].upperTick,
+                tickSpacing: positions[1].tickSpacing,
+                liquidityType: LiquidityType.Anchor,
+                amounts: AmountsToMint({
+                    amount0: amount0Anchor,
+                    amount1: amount1Anchor
+                })
+            })            
+        );
+
+        uint256 balanceToken0 = IERC20(IUniswapV3Pool(_v.pool).token0()).balanceOf(address(this));
+
+        LiquidityPosition memory newDiscovery =  LiquidityDeployer
+        .deployPositionRaw(
+            DeployLiquidityParams({
+                pool: address(_v.pool),
+                receiver: address(this),
+                bips: 0,
+                lowerTick: positions[2].lowerTick,
+                upperTick: positions[2].upperTick,
+                tickSpacing: positions[2].tickSpacing,
+                liquidityType: LiquidityType.Discovery,
+                amounts: AmountsToMint({
+                    amount0: balanceToken0,
+                    amount1: 0
+                })
+            })            
+        );
+
+        positions = [
+            newFloor, 
+            newAnchor, 
+            newDiscovery
+        ];
+
+        _updatePositions(positions);
+    }
+
     /**
     * @notice Allows creators to update only the subset of protocol parameters
     * that are explicitly creator-facing, leaving the rest unchanged.
@@ -242,7 +323,7 @@ contract AuxVault {
     }
     
     function recoverERC20(address token, address to) public onlyMultiSig {
-        if (to != INomaFactory(_v.factory).teamMultiSig()) revert NotAuthorized();
+        if (to != IOikosFactory(_v.factory).teamMultiSig()) revert NotAuthorized();
 
         IStakingRewards(_v.stakingContract).recoverERC20(token, to);
     }
@@ -274,7 +355,7 @@ contract AuxVault {
      * @return The address of the team multisig.
      */
     function teamMultiSig() public view returns (address) {
-        return INomaFactory(_v.factory).teamMultiSig();
+        return IOikosFactory(_v.factory).teamMultiSig();
     }
 
 
@@ -355,6 +436,50 @@ contract AuxVault {
         _v.protocolParameters = protocolParameters;
     }
 
+    // ========== TWAP Configuration (MEV Protection) ==========
+
+    /**
+     * @notice Gets the TWAP period used for manipulation detection.
+     * @return period TWAP lookback period in seconds (default: 120 = 2 min)
+     */
+    function getTwapPeriod() public view returns (uint32) {
+        uint32 period = _v.protocolParameters.twapPeriod;
+        return period == 0 ? 120 : period; // Default 2 minutes (works with cardinality ~50 on BSC)
+    }
+
+    /**
+     * @notice Sets the TWAP period for manipulation detection.
+     * @param period TWAP lookback period in seconds (recommended: 60-1800)
+     */
+    function setTwapPeriod(uint32 period) public onlyMultiSig {
+        if (period < 60) revert InvalidParams(); // Minimum 1 minute
+        _v.protocolParameters.twapPeriod = period;
+    }
+
+    /**
+     * @notice Gets the maximum allowed deviation from TWAP (in ticks).
+     * @return maxTicks Maximum deviation in ticks (default: 200 = ~2%)
+     * @dev Each tick ≈ 0.01% (1 basis point), so 200 ticks ≈ 2%
+     */
+    function getTwapDeviationTicks() public view returns (uint256) {
+        uint256 ticks = _v.protocolParameters.maxTwapDeviation;
+        return ticks == 0 ? 200 : ticks; // Default 200 ticks (~2%)
+    }
+
+    /**
+     * @notice Sets the maximum allowed deviation from TWAP.
+     * @param maxTicks Maximum deviation in ticks (recommended: 100-500)
+     * @dev Each tick ≈ 0.01% (1 basis point)
+     *      100 ticks ≈ 1% (tight, may block volatile tokens)
+     *      200 ticks ≈ 2% (balanced default)
+     *      300 ticks ≈ 3% (loose, for volatile tokens)
+     *      500 ticks ≈ 5% (very loose)
+     */
+    function setTwapDeviationTicks(uint256 maxTicks) public onlyMultiSig {
+        if (maxTicks < 50 || maxTicks > 1000) revert InvalidParams(); // 0.5% - 10% range
+        _v.protocolParameters.maxTwapDeviation = maxTicks;
+    }
+
     function consumeReferral(bytes8 code, uint256 amount) external {
         if (msg.sender != vToken()) revert NotAuthorized();
 
@@ -386,7 +511,7 @@ contract AuxVault {
         return _exchangeHelper;
     }
 
- 
+
 
     /**
      * @notice Retrieves the address of the vToken contract.
@@ -410,6 +535,51 @@ contract AuxVault {
         return _v.totalTeamFees;
     }
 
+    // ========== Rate Limiting (MEV Protection) ==========
+
+    /**
+    * @notice Returns whether this is a fresh deploy and the last shift timestamp.
+    */
+    function getLastShiftTime() public view returns (bool isFreshDeploy, uint256 lastShiftTime) {
+        if (_v.timeLastMinted != 0) {
+            // New deployments: minting is the canonical signal
+            isFreshDeploy = false;
+        } else if (_v.startedAt != 0) {
+            // Old deployments: fall back to time-based heuristic
+            isFreshDeploy = (block.timestamp - _v.startedAt) < 6 hours;
+        } else {
+            // Very old deployments (field didn’t exist at all)
+            isFreshDeploy = true;
+        }
+
+        lastShiftTime = _v.lastShiftTime;
+    }
+
+    /**
+     * @notice Returns the minimum cooldown period between shift/slide operations.
+     * @return The cooldown period in seconds (default: 300 = 5 minutes).
+     */
+    function getShiftCooldown() public view returns (uint256) {
+        // Default to 5 minutes if not set
+        return _v.shiftCooldown == 0 ? 300 : _v.shiftCooldown;
+    }
+
+    /**
+     * @notice Sets the minimum cooldown period between shift/slide operations.
+     * @param cooldown The new cooldown period in seconds.
+     */
+    function setShiftCooldown(uint256 cooldown) public onlyMultiSig {
+        _v.shiftCooldown = cooldown;
+    }
+
+    /**
+     * @notice Updates the last shift timestamp to current block.timestamp.
+     * @dev Called after successful shift/slide operations.
+     */
+    function updateShiftTime() public onlyInternalCalls {
+        _v.lastShiftTime = block.timestamp;
+    }
+
     /**
      * @notice Modifier to restrict access to the authorized manager.`
      */
@@ -419,7 +589,7 @@ contract AuxVault {
     }
 
     modifier onlyMultiSig() {
-        if (msg.sender != INomaFactory(_v.factory).teamMultiSig()) {
+        if (msg.sender != IOikosFactory(_v.factory).teamMultiSig()) {
             revert NotAuthorized();
         }
         _;        
@@ -433,7 +603,7 @@ contract AuxVault {
     }   
 
     modifier onlyManagerOrMultiSig() {
-        address multiSig = INomaFactory(_v.factory).teamMultiSig();
+        address multiSig = IOikosFactory(_v.factory).teamMultiSig();
         if (msg.sender != _v.manager && msg.sender != multiSig) {
             revert NotAuthorized();
         }
@@ -450,29 +620,68 @@ contract AuxVault {
 
     modifier onlyAuthorizedContracts() {
         if (msg.sender != exchangeHelper() && msg.sender != vToken()) revert NotAuthorized();
-        _;        
+        _;
+    }
+
+    /**
+     * @notice Retrieves vault data including circulating supply and token balances.
+     * @param addresses Protocol addresses.
+     * @return circulatingSupply The circulating supply of the vault.
+     * @return anchorToken1Balance The balance of token1 in the anchor position.
+     * @return discoveryToken1Balance The balance of token1 in the discovery position.
+     * @return discoveryToken0Balance The balance of token0 in the discovery position.
+     */
+    function getVaultData(ProtocolAddresses memory addresses) public view returns (uint256, uint256, uint256, uint256) {
+        (,,, uint256 anchorToken1Balance) = IModelHelper(addresses.modelHelper)
+        .getUnderlyingBalances(
+            addresses.pool,
+            addresses.vault,
+            LiquidityType.Anchor
+        );
+
+        (,, uint256 discoveryToken0Balance, uint256 discoveryToken1Balance) = IModelHelper(addresses.modelHelper)
+        .getUnderlyingBalances(
+            addresses.pool,
+            addresses.vault,
+            LiquidityType.Discovery
+        );
+
+        uint256 circulatingSupply = IModelHelper(addresses.modelHelper)
+        .getCirculatingSupply(
+            addresses.pool,
+            addresses.vault,
+            false // Include staked tokens so floor price is unaffected by staking
+        );
+
+        return (
+            circulatingSupply,
+            anchorToken1Balance,
+            discoveryToken1Balance,
+            discoveryToken0Balance
+        );
     }
 
     /**
      * @notice Retrieves the function selectors for this contract.
      * @return selectors An array of function selectors.
      */
-    function getFunctionSelectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](22);
+    function getFunctionSelectors() external pure virtual returns (bytes4[] memory) {
+        bytes4[] memory selectors = new bytes4[](32);
         selectors[0] = bytes4(keccak256(bytes("teamMultiSig()")));
         selectors[1] = bytes4(keccak256(bytes("getTimeSinceLastMint()")));
         selectors[2] = bytes4(keccak256(bytes("getAccumulatedFees()")));
         selectors[3] = bytes4(keccak256(bytes("pool()")));
+        // 24-field struct signature (includes MEV protection: twapPeriod, maxTwapDeviation)
         selectors[4] = bytes4(
             keccak256(
-                bytes("setProtocolParameters((uint8,uint8,uint8,uint16[2],uint256,uint256,int24,int24,int24,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,(uint8,uint8),uint256))")
+                bytes("setProtocolParameters((uint8,uint8,uint8,uint16[2],uint256,uint256,int24,int24,int24,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,(uint8,uint8),uint256,uint256,uint32,uint256))")
             )
-        );      
+        );
         selectors[5] = bytes4(keccak256(bytes("setManager(address)")));
         selectors[6] = bytes4(keccak256(bytes("setModelHelper(address)")));
         selectors[7] = bytes4(keccak256(bytes("updatePositions((int24,int24,uint128,uint256,int24,uint8)[3])")));
         selectors[8] = bytes4(keccak256(bytes("mintTokens(address,uint256)")));
-        selectors[9] = bytes4(keccak256(bytes("burnTokens(uint256)")));
+        selectors[9] = bytes4(keccak256(bytes("burnTokens(address,uint256)")));
         selectors[10] = bytes4(keccak256(bytes("setReferralEntity(bytes8,uint256)")));
         selectors[11] = bytes4(keccak256(bytes("getReferralEntity(address)")));
         selectors[12] = bytes4(keccak256(bytes("setProtocolParametersCreator((int24,int24,int24,uint256,uint256,uint256,uint256,uint256,uint256,uint256))")));
@@ -485,7 +694,31 @@ contract AuxVault {
         selectors[19] = bytes4(keccak256(bytes("recoverERC20(address,address)")));
         selectors[20] = bytes4(keccak256(bytes("setAdvancedConf(bool)")));
         selectors[21] = bytes4(keccak256(bytes("consumeReferral(bytes8,uint256)")));
+        selectors[22] = bytes4(
+            keccak256(
+                bytes(
+                    "setLiquidity((int24,int24,uint128,uint256,int24,uint8)[3],uint256,uint256)"
+                )
+            )
+        );
+        selectors[23] = bytes4(
+            keccak256(
+                bytes(
+                    "getVaultData((address,address,address,address,address,address,address))"
+                )
+            )
+        );
+        // Rate limiting (MEV protection)
+        selectors[24] = bytes4(keccak256(bytes("getLastShiftTime()")));
+        selectors[25] = bytes4(keccak256(bytes("getShiftCooldown()")));
+        selectors[26] = bytes4(keccak256(bytes("setShiftCooldown(uint256)")));
+        selectors[27] = bytes4(keccak256(bytes("updateShiftTime()")));
+        // TWAP configuration (MEV protection)
+        selectors[28] = bytes4(keccak256(bytes("getTwapPeriod()")));
+        selectors[29] = bytes4(keccak256(bytes("setTwapPeriod(uint32)")));
+        selectors[30] = bytes4(keccak256(bytes("getTwapDeviationTicks()")));
+        selectors[31] = bytes4(keccak256(bytes("setTwapDeviationTicks(uint256)")));
 
-        return selectors; 
+        return selectors;
     }
 }        

@@ -3,12 +3,12 @@ pragma solidity ^0.8.23;
 
 import "forge-std/Test.sol";
 import "./token/TestGons.sol";
-import "./token/TestMockNomaToken.sol";
+import "./token/TestMockOikosToken.sol";
 import "../src/staking/Staking.sol";
 
 contract TestRebase is Test {
     TestGons rebaseToken;
-    TestMockNomaToken mockNomaToken;
+    TestMockOikosToken mockOikosToken;
     Staking staking;
 
     address userA = address(0x1);
@@ -22,15 +22,15 @@ contract TestRebase is Test {
     address deployer = vm.envAddress("DEPLOYER");
 
     function setUp() public {
-        mockNomaToken = new TestMockNomaToken();
-        mockNomaToken.initialize(address(this), 100_000e18, 200_000_000e18, "TEST", "TEST", address(0));
+        mockOikosToken = new TestMockOikosToken();
+        mockOikosToken.initialize(address(this), 100_000e18, 200_000_000e18, "TEST", "TEST", address(0));
 
         rebaseToken = new TestGons(100_000_000e18);
 
         vm.prank(deployer);
-        staking = new Staking(address(mockNomaToken), address(rebaseToken), address(this));        
-        mockNomaToken.mintTest(address(staking), INITIAL_SUPPLY);
-        // staking.setup(address(this), address(mockNomaToken), address(rebaseToken));
+        staking = new Staking(address(mockOikosToken), address(rebaseToken), address(this));        
+        mockOikosToken.mintTest(address(staking), INITIAL_SUPPLY);
+        // staking.setup(address(this), address(mockOikosToken), address(rebaseToken));
         rebaseToken.initialize(address(staking));
         rebaseToken.setIndex(1);
 
@@ -44,7 +44,7 @@ contract TestRebase is Test {
         vm.prank(address(staking));
         staking.notifyRewardAmount(0);
 
-        mockNomaToken.approve(address(staking), profit);
+        mockOikosToken.approve(address(staking), profit);
 
         vm.prank(address(staking));
         staking.notifyRewardAmount(profit);
@@ -62,13 +62,13 @@ contract TestRebase is Test {
     }
 
     function testStakeUserA() public {
-        mockNomaToken.mintTest(userA, 1000e18);
+        mockOikosToken.mintTest(userA, 1000e18);
 
         uint256 rebaseTokenBalance = rebaseToken.balanceOf(userA);
         // console.log("rebaseTokenBalance: %s", rebaseTokenBalance);
 
         vm.prank(userA);
-        mockNomaToken.approve(address(staking), 100e18);
+        mockOikosToken.approve(address(staking), 100e18);
         vm.stopPrank();
 
         vm.prank(userA);
@@ -82,30 +82,30 @@ contract TestRebase is Test {
     }
 
     function testStakeUserB() public {
-        mockNomaToken.mintTest(userB, 1000e18);
-        uint256 nomaBalanceBefore = mockNomaToken.balanceOf(userB);
+        mockOikosToken.mintTest(userB, 1000e18);
+        uint256 nomaBalanceBefore = mockOikosToken.balanceOf(userB);
 
         vm.prank(userB);
-        mockNomaToken.approve(address(staking), 100e18);
+        mockOikosToken.approve(address(staking), 100e18);
         vm.stopPrank();
 
         vm.prank(userB);
         staking.stake(100e18);
         vm.stopPrank();
 
-        uint256 nomaBalanceAfter = mockNomaToken.balanceOf(userB);
+        uint256 nomaBalanceAfter = mockOikosToken.balanceOf(userB);
         assertLt(nomaBalanceAfter, nomaBalanceBefore);
     
     }
 
     function testStakeAndProfit() public {
-        mockNomaToken.mintTest(userA, 1000e18);
+        mockOikosToken.mintTest(userA, 1000e18);
 
         uint256 rebaseTokenBalance = rebaseToken.balanceOf(userA);
         // console.log("rebaseTokenBalance: %s", rebaseTokenBalance);
 
         vm.prank(userA);
-        mockNomaToken.approve(address(staking), 100e18);
+        mockOikosToken.approve(address(staking), 100e18);
         vm.stopPrank();
 
         vm.prank(userA);
@@ -117,34 +117,34 @@ contract TestRebase is Test {
 
         assertGt(rebaseToken.balanceOf(userA), rebaseTokenBalance);
 
-        mockNomaToken.mintTest(userB, 1000e18);
-        uint256 nomaBalanceBefore = mockNomaToken.balanceOf(userB);
+        mockOikosToken.mintTest(userB, 1000e18);
+        uint256 nomaBalanceBefore = mockOikosToken.balanceOf(userB);
 
         vm.prank(userB);
-        mockNomaToken.approve(address(staking), 100e18);
+        mockOikosToken.approve(address(staking), 100e18);
         vm.stopPrank();
 
         vm.prank(userB);
         staking.stake(100e18);
         vm.stopPrank();
 
-        uint256 nomaBalanceAfter = mockNomaToken.balanceOf(userB);
+        uint256 nomaBalanceAfter = mockOikosToken.balanceOf(userB);
         assertLt(nomaBalanceAfter, nomaBalanceBefore); 
         
-        mockNomaToken.mintTest(userC, 1000e18);
+        mockOikosToken.mintTest(userC, 1000e18);
 
         vm.prank(userC);
-        mockNomaToken.approve(address(staking), 100e18);
+        mockOikosToken.approve(address(staking), 100e18);
         vm.stopPrank();
 
         vm.prank(userC);
         staking.stake(100e18);
         vm.stopPrank();
 
-        mockNomaToken.mintTest(userD, 1000e18);
+        mockOikosToken.mintTest(userD, 1000e18);
 
         vm.prank(userD);
-        mockNomaToken.approve(address(staking), 100e18);
+        mockOikosToken.approve(address(staking), 100e18);
         vm.stopPrank();
 
         vm.prank(userD);
@@ -152,7 +152,7 @@ contract TestRebase is Test {
         vm.stopPrank();
 
         uint256 profit = 3000e18;
-        mockNomaToken.approve(address(staking), profit);
+        mockOikosToken.approve(address(staking), profit);
 
         vm.prank(address(staking));
         staking.notifyRewardAmount(0);
@@ -166,9 +166,9 @@ contract TestRebase is Test {
         uint256 balanceAfterProfitUserD = rebaseToken.balanceOf(userD);
 
         uint256 balanceAfterProfitStaking = rebaseToken.balanceOf(address(staking));
-        uint256 nomaBalanceStaking = mockNomaToken.balanceOf(address(staking));
+        uint256 nomaBalanceStaking = mockOikosToken.balanceOf(address(staking));
 
-        require(nomaBalanceStaking >= (balanceAfterProfitUserA + balanceAfterProfitUserB + balanceAfterProfitUserC + balanceAfterProfitUserD), "Staking contract should have enough Noma tokens");
+        require(nomaBalanceStaking >= (balanceAfterProfitUserA + balanceAfterProfitUserB + balanceAfterProfitUserC + balanceAfterProfitUserD), "Staking contract should have enough Oikos tokens");
         // console.log("balanceAfterProfitUserA: %s", balanceAfterProfitUserA);    
         // console.log("balanceAfterProfitUserB: %s", balanceAfterProfitUserB);   
         // console.log("balanceAfterProfitUserC: %s", balanceAfterProfitUserC);      
@@ -192,12 +192,12 @@ contract TestRebase is Test {
         // Create users, mint tokens, and stake
         for (uint8 i = 0; i < numUsers; i++) {
             users[i] = address(uint160(i + 1));
-            mockNomaToken.mintTest(users[i], initialBalance);
+            mockOikosToken.mintTest(users[i], initialBalance);
 
             initialRebaseBalances[i] = rebaseToken.balanceOf(users[i]);
 
             vm.prank(users[i]);
-            mockNomaToken.approve(address(staking), stakeAmount);
+            mockOikosToken.approve(address(staking), stakeAmount);
             vm.stopPrank();
 
             vm.prank(users[i]);
@@ -206,7 +206,7 @@ contract TestRebase is Test {
 
             afterStakeRebaseBalances[i] = rebaseToken.balanceOf(users[i]);
             assertGt(afterStakeRebaseBalances[i], initialRebaseBalances[i], "Rebase balance should increase after staking");
-            assertEq(mockNomaToken.balanceOf(users[i]), initialBalance - stakeAmount, "Noma balance should decrease by stake amount");
+            assertEq(mockOikosToken.balanceOf(users[i]), initialBalance - stakeAmount, "Oikos balance should decrease by stake amount");
         }
 
         // Distribute profit
@@ -216,7 +216,7 @@ contract TestRebase is Test {
         staking.notifyRewardAmount(0);
         vm.stopPrank();
 
-        mockNomaToken.approve(address(staking), profit);
+        mockOikosToken.approve(address(staking), profit);
         
         vm.prank(address(staking));
         staking.notifyRewardAmount(profit);
@@ -232,12 +232,12 @@ contract TestRebase is Test {
         }
 
         uint256 balanceAfterProfitStaking = rebaseToken.balanceOf(address(staking));
-        uint256 nomaBalanceStaking = mockNomaToken.balanceOf(address(staking));
+        uint256 nomaBalanceStaking = mockOikosToken.balanceOf(address(staking));
 
         // console.log("Balance after profit for staking contract: %s", balanceAfterProfitStaking);
-        // console.log("Noma balance of staking contract: %s", nomaBalanceStaking);
+        // console.log("Oikos balance of staking contract: %s", nomaBalanceStaking);
 
-        assertGe(nomaBalanceStaking, totalRebaseBalance - (balanceAfterProfitStaking - balanceAfterProfitStaking), "Staking contract should have enough Noma tokens");
+        assertGe(nomaBalanceStaking, totalRebaseBalance - (balanceAfterProfitStaking - balanceAfterProfitStaking), "Staking contract should have enough Oikos tokens");
     }
 
     function testArbitraryStakesWithRandomAmountsAndProfit() public {
@@ -258,7 +258,7 @@ contract TestRebase is Test {
         for (uint8 i = 0; i < numUsers; i++) {
             
             users[i] = address(uint160(i + 1));
-            mockNomaToken.mintTest(users[i], initialBalance);
+            mockOikosToken.mintTest(users[i], initialBalance);
 
             initialRebaseBalances[i] = rebaseToken.balanceOf(users[i]);
 
@@ -268,7 +268,7 @@ contract TestRebase is Test {
             totalStaked += stakeAmount;
 
             vm.prank(users[i]);
-            mockNomaToken.approve(address(staking), stakeAmount);
+            mockOikosToken.approve(address(staking), stakeAmount);
             vm.stopPrank();
 
             vm.prank(users[i]);
@@ -277,21 +277,21 @@ contract TestRebase is Test {
 
             afterStakeRebaseBalances[i] = rebaseToken.balanceOf(users[i]);
             assertGt(afterStakeRebaseBalances[i], initialRebaseBalances[i], "Rebase balance should increase after staking");
-            assertEq(mockNomaToken.balanceOf(users[i]), initialBalance - stakeAmount, "Noma balance should decrease by stake amount");
+            assertEq(mockOikosToken.balanceOf(users[i]), initialBalance - stakeAmount, "Oikos balance should decrease by stake amount");
 
             // console.log("User %s staked amount: %s", i, stakeAmount);
         }
         
         // Distribute profit
         uint256 profit = 300_000e18; // Set profit to 50% of total staked amount
-        mockNomaToken.mintTest(address(staking), profit);
+        mockOikosToken.mintTest(address(staking), profit);
 
         vm.prank(address(staking));
         staking.notifyRewardAmount(0);
         vm.stopPrank();
 
         vm.prank(address(staking));
-        mockNomaToken.approve(address(staking), profit);
+        mockOikosToken.approve(address(staking), profit);
 
         vm.prank(address(staking));
         staking.notifyRewardAmount(profit);
@@ -310,12 +310,12 @@ contract TestRebase is Test {
         }
 
         // uint256 balanceAfterProfitStaking = rebaseToken.balanceOf(address(staking));
-        uint256 nomaBalanceStaking = mockNomaToken.balanceOf(address(staking));
+        uint256 nomaBalanceStaking = mockOikosToken.balanceOf(address(staking));
 
         // console.log("Balance after profit for staking contract: %s", balanceAfterProfitStaking);
-        // console.log("Noma balance of staking contract: %s", nomaBalanceStaking);
+        // console.log("Oikos balance of staking contract: %s", nomaBalanceStaking);
 
-        assertGe(nomaBalanceStaking, totalRebaseBalance , "Staking contract should have enough Noma tokens");
+        assertGe(nomaBalanceStaking, totalRebaseBalance , "Staking contract should have enough Oikos tokens");
         // assertEq(rebaseToken.totalSupply(),  balanceAfterProfitStaking, "Total supply should match sum of all balances");
     }
 
@@ -336,7 +336,7 @@ contract TestRebase is Test {
         // Create users, mint tokens, and stake random amounts
         for (uint8 i = 0; i < numUsers; i++) {
             users[i] = address(uint160(i + 1));
-            mockNomaToken.mintTest(users[i], initialBalance);
+            mockOikosToken.mintTest(users[i], initialBalance);
 
             initialRebaseBalances[i] = rebaseToken.balanceOf(users[i]);
 
@@ -345,7 +345,7 @@ contract TestRebase is Test {
             totalStaked += stakeAmount;
 
             vm.prank(users[i]);
-            mockNomaToken.approve(address(staking), stakeAmount);
+            mockOikosToken.approve(address(staking), stakeAmount);
             vm.stopPrank();
 
             vm.prank(users[i]);
@@ -360,7 +360,7 @@ contract TestRebase is Test {
         
         // Distribute profit
         uint256 profit = 300_000e18;
-        mockNomaToken.mintTest(address(staking), profit);
+        mockOikosToken.mintTest(address(staking), profit);
 
         // console.log("Before first notifyRewardAmount(0):");
         // console.log("Total supply:");
@@ -392,7 +392,7 @@ contract TestRebase is Test {
         // console.log(rebaseToken.circulatingSupply());
 
         vm.prank(address(staking));
-        mockNomaToken.approve(address(staking), profit);
+        mockOikosToken.approve(address(staking), profit);
 
         vm.prank(address(staking));
         staking.notifyRewardAmount(profit);
@@ -420,14 +420,14 @@ contract TestRebase is Test {
         }
 
         uint256 balanceAfterProfitStaking = rebaseToken.balanceOf(address(staking));
-        uint256 nomaBalanceStaking = mockNomaToken.balanceOf(address(staking));
+        uint256 nomaBalanceStaking = mockOikosToken.balanceOf(address(staking));
 
         // console.log("Balance after profit for staking contract:");
         // console.log(balanceAfterProfitStaking);
-        // console.log("Noma balance of staking contract:");
+        // console.log("Oikos balance of staking contract:");
         // console.log(nomaBalanceStaking);
 
-        assertGe(nomaBalanceStaking, totalRebaseBalance, "Staking contract should have enough Noma tokens");
+        assertGe(nomaBalanceStaking, totalRebaseBalance, "Staking contract should have enough Oikos tokens");
     }
 
     function testDirectRebase() public {
@@ -506,10 +506,10 @@ contract TestRebase is Test {
 
         for (uint i = 0; i < NUM_USERS; i++) {
             users[i] = address(uint160(i + 1));
-            mockNomaToken.mintTest(users[i], 1000e18);
+            mockOikosToken.mintTest(users[i], 1000e18);
 
             vm.prank(users[i]);
-            mockNomaToken.approve(address(staking), STAKE_AMOUNT);
+            mockOikosToken.approve(address(staking), STAKE_AMOUNT);
             vm.stopPrank();
 
             vm.prank(users[i]);
@@ -522,7 +522,7 @@ contract TestRebase is Test {
         vm.prank(address(staking));
         staking.notifyRewardAmount(0);
 
-        mockNomaToken.mintTest(address(staking), REWARD_AMOUNT);
+        mockOikosToken.mintTest(address(staking), REWARD_AMOUNT);
         vm.prank(address(staking));
         staking.notifyRewardAmount(REWARD_AMOUNT);
 
@@ -543,16 +543,16 @@ contract TestRebase is Test {
     //         staking.stake(users[i], STAKE_AMOUNT);
     //     }
 
-    //     uint256 initialTotalSupply = sNOMA.totalSupply();
+    //     uint256 initialTotalSupply = sOKS.totalSupply();
 
     //     vm.prank(address(staking));
     //     staking.notifyRewardAmount(0);
 
-    //     NOMA.mintTest(address(staking), REWARD_AMOUNT);
+    //     OKS.mintTest(address(staking), REWARD_AMOUNT);
     //     vm.prank(address(staking));
     //     staking.notifyRewardAmount(REWARD_AMOUNT);
 
-    //     uint256 totalTokensDistributed = sNOMA.totalSupply() - initialTotalSupply;
+    //     uint256 totalTokensDistributed = sOKS.totalSupply() - initialTotalSupply;
     //     assertEq(totalTokensDistributed, REWARD_AMOUNT, "Total distributed tokens mismatch with notified reward amount");
     // }    
 }

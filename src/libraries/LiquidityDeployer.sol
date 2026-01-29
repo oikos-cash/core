@@ -13,6 +13,7 @@ import {IVault} from "../interfaces/IVault.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {
+    VaultInfo,
     LiquidityPosition,
     LiquidityType,
     AmountsToMint,
@@ -23,6 +24,7 @@ import "../errors/Errors.sol";
 
 interface IVaultExt {
     function mintTokens(address to, uint256 amount) external returns (bool);
+    function getVaultInfo() external view returns (VaultInfo memory);
 }
 
 /**
@@ -38,7 +40,6 @@ library LiquidityDeployer {
         uint256 amount0ToDeploy,
         uint256 amount1ToDeploy,
         int24 tickSpacing
-        // LiquidityPosition[3] memory positions
     ) internal returns (LiquidityPosition memory newPosition) {
 
         uint8 decimals = IERC20Metadata(IUniswapV3Pool(pool).token0()).decimals();
@@ -128,12 +129,23 @@ library LiquidityDeployer {
     {
         uint8 decimals = IERC20Metadata(address(IUniswapV3Pool(deployParams.pool).token0())).decimals();
 
+        // uint256 lowerDiscoveryPrice = Conversions.sqrtPriceX96ToPrice(
+        //     Conversions.tickToSqrtPriceX96(anchorPosition.upperTick),
+        //     decimals
+        // );
+
+        // Buffer must be at least 2x tick spacing to ensure different tick after rounding
+        // This makes discovery compatible with all fee tiers (including 1% with tickSpacing=200)
+        // int256 minBuffer = int256(uint256(int256(anchorPosition.tickSpacing))) * 2;
+        // if (minBuffer < 50) minBuffer = 50; // Minimum 0.5% buffer
+        // lowerDiscoveryPrice = Utils.addBips(lowerDiscoveryPrice, minBuffer);
+
         uint256 lowerDiscoveryPrice = Conversions.sqrtPriceX96ToPrice(
             Conversions.tickToSqrtPriceX96(anchorPosition.upperTick),
             decimals
         );
 
-        lowerDiscoveryPrice = Utils.addBips(lowerDiscoveryPrice, 50);
+        lowerDiscoveryPrice = Utils.addBips(lowerDiscoveryPrice, 150);
 
         (int24 lowerTick, int24 upperTick) = Conversions
         .computeRangeTicks(
@@ -246,6 +258,45 @@ library LiquidityDeployer {
             params.amounts.amount1
         );
 
+        if (params.liquidityType == LiquidityType.Discovery ||
+            params.liquidityType == LiquidityType.Anchor) {
+            if (params.amounts.amount0 == 0) {
+                VaultInfo memory info = IVaultExt(params.receiver).getVaultInfo();
+
+                uint256 toMint = params.liquidityType == LiquidityType.Discovery ?
+                    info.circulatingSupply / 100000 : // 0.001% for discovery
+                    info.circulatingSupply / 50000;   // 0.002% for anchor
+
+                IVaultExt(params.receiver).mintTokens(
+                    params.receiver,
+                    toMint
+                );
+
+                uint256 token1Required = Uniswap
+                .computeAmount1ForAmount0(
+                    LiquidityPosition({
+                        lowerTick: params.lowerTick, 
+                        upperTick: params.upperTick, 
+                        liquidity: liquidity, 
+                        price: 0,
+                        tickSpacing: params.tickSpacing,
+                        liquidityType: params.liquidityType
+                    }), 
+                    toMint
+                );
+                
+                liquidity = LiquidityAmounts
+                .getLiquidityForAmounts(
+                    sqrtRatioX96,
+                    TickMath.getSqrtRatioAtTick(params.lowerTick),
+                    TickMath.getSqrtRatioAtTick(params.upperTick),
+                    toMint,
+                    token1Required
+                );
+
+            }
+        }
+
         if (liquidity > 0) {
             Uniswap.mint(
                 params.pool, 
@@ -270,4 +321,41 @@ library LiquidityDeployer {
         });          
     }
 
+    function deployPositionRaw(
+      DeployLiquidityParams memory params
+    ) internal returns (LiquidityPosition memory newPosition) {
+        (uint160 sqrtRatioX96,,,,,,) = IUniswapV3Pool(params.pool).slot0();
+
+        uint128 liquidity = LiquidityAmounts
+        .getLiquidityForAmounts(
+            sqrtRatioX96,
+            TickMath.getSqrtRatioAtTick(params.lowerTick),
+            TickMath.getSqrtRatioAtTick(params.upperTick),
+            params.amounts.amount0, 
+            params.amounts.amount1
+        );
+
+        if (liquidity > 0) {
+            Uniswap.mint(
+                params.pool, 
+                params.receiver, 
+                params.lowerTick, 
+                params.upperTick, 
+                liquidity, 
+                params.liquidityType, 
+                false
+            );
+        } else {
+            revert NoLiquidity();
+        }   
+
+        newPosition = LiquidityPosition({
+            lowerTick: params.lowerTick, 
+            upperTick: params.upperTick, 
+            liquidity: liquidity, 
+            price: 0,
+            tickSpacing: params.tickSpacing,
+            liquidityType: params.liquidityType
+        });          
+    }
 }

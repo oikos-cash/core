@@ -1,19 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// ███╗   ██╗ ██████╗ ███╗   ███╗ █████╗                               
-// ████╗  ██║██╔═══██╗████╗ ████║██╔══██╗                              
-// ██╔██╗ ██║██║   ██║██╔████╔██║███████║                              
-// ██║╚██╗██║██║   ██║██║╚██╔╝██║██╔══██║                              
-// ██║ ╚████║╚██████╔╝██║ ╚═╝ ██║██║  ██║                              
-// ╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝                              
-                                                                    
-// ██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗     
-// ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║     
-// ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗
-// ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
+//  ██████╗ ██╗██╗  ██╗ ██████╗ ███████╗
+// ██╔═══██╗██║██║ ██╔╝██╔═══██╗██╔════╝
+// ██║   ██║██║█████╔╝ ██║   ██║███████╗
+// ██║   ██║██║██╔═██╗ ██║   ██║╚════██║
+// ╚██████╔╝██║██║  ██╗╚██████╔╝███████║
+//  ╚═════╝ ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+                                     
 //
 // Contract: Resolver.sol
 // Author:  
@@ -64,7 +58,7 @@ contract Resolver is Ownable {
     /// @param _factory Address of the factory contract to initialize.
     function initFactory(address _factory) external onlyOwner {
         if (_factory == address(0)) revert InvalidAddress();
-        repository["NomaFactory"] = _factory;
+        repository["OikosFactory"] = _factory;
     }
 
     /// @notice Imports multiple addresses into the repository.
@@ -167,7 +161,7 @@ contract Resolver is Ownable {
 
     /// @dev Ensures that the caller is either the factory or the owner of the contract.
     modifier onlyFactoryOrOwner() {
-        if (msg.sender != repository["NomaFactory"] && msg.sender != owner()) {
+        if (msg.sender != repository["OikosFactory"] && msg.sender != owner()) {
             revert OnlyFactoryOrManagerAllowed();
         }
         _;

@@ -1,22 +1,15 @@
   // SPDX-License-Identifier: MIT
   pragma solidity ^0.8.23;
   
-  // ███╗   ██╗ ██████╗ ███╗   ███╗ █████╗                               
-  // ████╗  ██║██╔═══██╗████╗ ████║██╔══██╗                              
-  // ██╔██╗ ██║██║   ██║██╔████╔██║███████║                              
-  // ██║╚██╗██║██║   ██║██║╚██╔╝██║██╔══██║                              
-  // ██║ ╚████║╚██████╔╝██║ ╚═╝ ██║██║  ██║                              
-  // ╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝                              
-                                                                        
-  // ██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗     
-  // ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║     
-  // ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-  // ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-  // ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗
-  // ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
+  //  ██████╗ ██╗██╗  ██╗ ██████╗ ███████╗
+  // ██╔═══██╗██║██║ ██╔╝██╔═══██╗██╔════╝
+  // ██║   ██║██║█████╔╝ ██║   ██║███████╗
+  // ██║   ██║██║██╔═██╗ ██║   ██║╚════██║
+  // ╚██████╔╝██║██║  ██╗╚██████╔╝███████║
+  //  ╚═════╝ ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝       
   //
-  // Author: 0xsufi@noma.money
-  // Copyright Noma Protocol 2025/2026
+  //                                  
+  // Copyright Oikos Protocol 2025/2026
 
   import {pAsset} from "./token/pAsset.sol";
   import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -31,7 +24,8 @@
   import {Utils} from "../libraries/Utils.sol";
   import {DecimalMath} from "../libraries/DecimalMath.sol";
   import {PresaleDeployParams, PresaleProtocolParams, LivePresaleParams, SwapParams} from "../types/Types.sol";
-import "../errors/Errors.sol";
+  import {TwapOracle} from "../libraries/TwapOracle.sol";                                                                                                       
+  import "../errors/Errors.sol";
 
   interface IVault {
       function afterPresale() external;
@@ -124,6 +118,7 @@ import "../errors/Errors.sol";
     uint256 public MIN_CONTRIBUTION;
     uint256 public MAX_CONTRIBUTION;
     uint256 public teamFeePct;
+    uint8 tokenDecimals;
 
     bool public emergencyWithdrawalFlag;
     bool private locked;
@@ -158,7 +153,10 @@ import "../errors/Errors.sol";
     error EmergencyWithdrawalNotEnabled();
     error NoReentrantCalls();
     error OnlyFactoryOwner();
-
+    error TwapNotReady();
+    
+    event EthTransferFailed(address to);
+    
     constructor(
         address _factory,
         PresaleDeployParams memory params,
@@ -181,9 +179,10 @@ import "../errors/Errors.sol";
         factory = _factory;
         teamFeePct = _protocolParams.teamFee;
 
-        if (params.deadline < 3 days || params.deadline > 90 days) revert InvalidParametersDuration();
+        if (params.deadline < _protocolParams.minDuration || params.deadline > _protocolParams.maxDuration) revert InvalidParametersDuration();
 
-        uint256 launchSupplyDecimals = IERC20Metadata(pool.token0()).decimals(); 
+        tokenDecimals = IERC20Metadata(pool.token0()).decimals(); 
+        uint256 launchSupplyDecimals = tokenDecimals;
         uint256 initialPriceDecimals = 18; 
 
         uint256 normalizedLaunchSupply = launchSupply * (10 ** (18 - launchSupplyDecimals));
@@ -332,36 +331,43 @@ import "../errors/Errors.sol";
         IVault(vaultAddress).afterPresale();
         IWETH(tokenInfo.token1).deposit{value: contributionAmount}();
 
-        // 6) compute slippage-adjusted price
-        (uint160 sqrt0,,,,,,) = pool.slot0();
-        uint256 spotPriceX96 = Conversions.sqrtPriceX96ToPrice(sqrt0, 18);
-        uint256 slippagePriceX96 = spotPriceX96 + (spotPriceX96 * 5) / 1000;
+        // TWAP parameter
+        uint32 twapPeriod = 3000; 
 
-        // [M-06 FIX] Calculate proper minimum amount out with slippage protection
-        // Expected tokens = contribution / price, with 0.5% slippage tolerance
-        uint256 expectedTokens = (contributionAmount * 1e18) / spotPriceX96;
-        uint256 calculatedMinAmountOut = (expectedTokens * 995) / 1000; // 0.5% slippage
+        uint160 spotPriceX96 = TwapOracle
+        .getTwapSqrtPriceX96(
+            address(pool),
+            twapPeriod
+        );
+
+        // Check if pool has enough oracle history for TWAP
+        (bool canSupport, , ) = TwapOracle.checkOracleSupport(address(pool), twapPeriod);
+
+        if (!canSupport) {
+            revert TwapNotReady();
+        }
+
+        uint160 slippagePriceX96 = spotPriceX96 + (spotPriceX96 * 5) / 1000;
 
         // 7) swap with a limit order at slippagePriceX96
         Uniswap.swap(
             SwapParams({
-                vaultAddress: address(0),
+                vaultAddress:  address(0),
                 poolAddress:   address(pool),
                 receiver:      address(this),
                 token0:        tokenInfo.token0,
                 token1:        tokenInfo.token1,
-                basePriceX96:  Conversions.priceToSqrtPriceX96(int256(slippagePriceX96), tickSpacing, 18),
+                basePriceX96:  slippagePriceX96,
                 amountToSwap:  contributionAmount,
                 slippageTolerance: 1,
                 zeroForOne:    false,
                 isLimitOrder:  true,
-                minAmountOut:  calculatedMinAmountOut
+                minAmountOut:  0
             })
         );
 
         // 8) emit + payouts
         emit Finalized(raisedBalance, feeTaken, contributionAmount, slippagePriceX96);
-        _withdrawExcessEth();
     }
 
     function withdraw() external lock {
@@ -417,11 +423,11 @@ import "../errors/Errors.sol";
     /**
     * @notice Allows contributors to withdraw funds if the presale is unsuccessful.
     * Contributors must burn their p-assets first.
-    * Withdrawal can only occur 30 days after the presale deadline.
+    * Withdrawal can only occur 15 days after the presale deadline.
     */
     function emergencyWithdrawal() external emergencyWithdrawalEnabled lock {
         if (finalized) revert AlreadyFinalized();
-        if (block.timestamp < deadline + 30 days) revert WithdrawNotAllowedYet();
+        if (block.timestamp < deadline + 15 days) revert WithdrawNotAllowedYet();
 
         uint256 amount = contributions[msg.sender];
         if (amount == 0) revert NoContributionsToWithdraw();
@@ -449,19 +455,23 @@ import "../errors/Errors.sol";
         if (!finalized) revert NotFinalized();
 
         uint256 balance = address(this).balance;
-        // Reserve ETH for referral payouts
         if (balance <= totalReferralReserved) return;
-        uint256 withdrawable = balance - totalReferralReserved;
 
-        // calculate fee
+        uint256 withdrawable = balance - totalReferralReserved;
         uint256 fee = (withdrawable * teamFeePct) / 100;
+
         address teamMultiSig = IFactory(factory).teamMultiSig();
 
-        if (teamMultiSig != address(0)) {
-            // transfer fee to team multisig
-            payable(teamMultiSig).transfer(fee);
+        if (teamMultiSig != address(0) && fee > 0) {
+            (bool ok, ) = teamMultiSig.call{value: fee}("");
+            if (!ok) emit EthTransferFailed(teamMultiSig);
         }
-        payable(owner()).transfer(withdrawable - fee);
+
+        uint256 remainder = withdrawable - fee;
+        if (remainder > 0) {
+            (bool ok, ) = owner().call{value: remainder}("");
+            if (!ok) emit EthTransferFailed(owner());
+        }
     }
 
     /**
@@ -613,12 +623,12 @@ import "../errors/Errors.sol";
         });
     }
 
-   function sweepUnexpectedETH() external onlyOwner {
-       uint256 unexpected = address(this).balance - totalDeposited;
-       if (unexpected > 0) {
-           payable(owner()).transfer(unexpected);
-       }
-   }
+    function sweepUnexpectedETH() external onlyOwner {                                                                                                         
+        uint256 reserved = totalDeposited + totalReferralReserved;                                                                                             
+        if (address(this).balance <= reserved) return;                                                                                                         
+        uint256 unexpected = address(this).balance - reserved;                                                                                                 
+        payable(owner()).transfer(unexpected);                                                                                                                 
+    }                                                                                                                                                          
    
     modifier emergencyWithdrawalEnabled () {
         if (!emergencyWithdrawalFlag) revert EmergencyWithdrawalNotEnabled();

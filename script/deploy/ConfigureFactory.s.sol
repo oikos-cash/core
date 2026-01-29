@@ -42,7 +42,7 @@ contract ConfigureFactory is Script {
 
         // Read the JSON file
         string memory json = vm.readFile(path);
-        string memory networkId = isChainFork ? "1337" : isMainnet ? "143" : "10143"; 
+        string memory networkId = isChainFork ? "1337" : isMainnet ? "56" : "10143"; 
 
         // Parse the data for network ID 
         bytes memory data = vm.parseJson(json, string.concat(string("."), networkId));

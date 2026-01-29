@@ -199,4 +199,25 @@ library Uniswap {
         );
     }
 
+    function computeAmount1ForAmount0(
+        LiquidityPosition memory position,
+        uint256 amount0
+    ) public view returns (uint256 amount1) {
+
+        // Get liquidity for the given amount0
+        uint128 liquidity = LiquidityAmounts
+        .getLiquidityForAmount0(
+            TickMath.getSqrtRatioAtTick(position.lowerTick),
+            TickMath.getSqrtRatioAtTick(position.upperTick),
+            amount0
+        );
+
+        // Compute corresponding amount1 for that liquidity
+        amount1 = LiquidityAmounts
+        .getAmount1ForLiquidity(
+            TickMath.getSqrtRatioAtTick(position.lowerTick),
+            TickMath.getSqrtRatioAtTick(position.upperTick),
+            liquidity
+        );
+    }
 }

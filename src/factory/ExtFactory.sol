@@ -11,7 +11,7 @@ import { vToken } from "../token/vToken/vToken.sol";
 import { VaultDescription, VaultInfo, ExtDeployParams} from "../types/Types.sol";
 import { IVault } from "../interfaces/IVault.sol";
 
-interface INomaFactory {
+interface IOikosFactory {
     function getVaultsRepository(address vault) external view returns (VaultDescription memory);
 }
  
@@ -104,12 +104,12 @@ contract ExtFactory {
      */
     modifier onlyFactoryOrOwner(address vaultAddress) {
         address factory = resolver.requireAndGetAddress(
-            Utils.stringToBytes32("NomaFactory"), 
+            Utils.stringToBytes32("OikosFactory"), 
             "no factory"
         );        
         
         VaultDescription memory vaultDesc = 
-        INomaFactory(factory).getVaultsRepository(vaultAddress);
+        IOikosFactory(factory).getVaultsRepository(vaultAddress);
 
 
         if (msg.sender != factory && msg.sender != vaultDesc.deployer) {

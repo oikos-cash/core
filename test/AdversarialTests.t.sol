@@ -7,7 +7,7 @@ import {stdJson} from "forge-std/StdJson.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../src/interfaces/IVault.sol";
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
-import {NomaToken} from "../src/token/NomaToken.sol";
+import {OikosToken} from "../src/token/OikosToken.sol";
 import {ModelHelper} from "../src/model/Helper.sol";
 import {BaseVault} from "../src/vault/BaseVault.sol";
 import {Conversions} from "../src/libraries/Conversions.sol";
@@ -37,7 +37,7 @@ struct ContractAddressesJson {
     address Resolver;
 }
 
-/// @title Adversarial Tests for Noma Protocol
+/// @title Adversarial Tests for Oikos Protocol
 /// @notice Tests extreme market scenarios including price manipulation and recovery
 contract AdversarialTests is Test {
     using stdJson for string;
@@ -45,7 +45,7 @@ contract AdversarialTests is Test {
     IVault vault;
     IERC20 token0;
     IERC20 token1;
-    NomaToken noma;
+    OikosToken noma;
     ModelHelper modelHelper;
 
     uint256 MAX_INT = type(uint256).max;
@@ -55,11 +55,11 @@ contract AdversarialTests is Test {
     bool isMainnet = vm.envOr("DEPLOY_FLAG_MAINNET", false);
 
     // Mainnet addresses
-    address constant WMON_MAINNET = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
+    address constant WBNB_MAINNET = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     // Testnet addresses
-    address constant WMON_TESTNET = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
+    address constant WBNB_TESTNET = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     // Select based on environment
-    address WMON;
+    address WBNB;
     address payable idoManager;
     address nomaToken;
     address modelHelperContract;
@@ -73,8 +73,8 @@ contract AdversarialTests is Test {
     uint256 initialLiquidityRatio;
 
     function setUp() public {
-        // Set WMON based on mainnet/testnet flag
-        WMON = isMainnet ? WMON_MAINNET : WMON_TESTNET;
+        // Set WBNB based on mainnet/testnet flag
+        WBNB = isMainnet ? WBNB_MAINNET : WBNB_TESTNET;
 
         string memory root = vm.projectRoot();
         string memory path = string.concat(root, "/deploy_helper/out/out.json");
@@ -87,7 +87,7 @@ contract AdversarialTests is Test {
         modelHelperContract = vm.parseJsonAddress(json, string.concat(".", networkId, ".ModelHelper"));
 
         managerContract = IDOManager(idoManager);
-        noma = NomaToken(nomaToken);
+        noma = OikosToken(nomaToken);
         modelHelper = ModelHelper(modelHelperContract);
         vaultAddress = address(managerContract.vault());
 
@@ -135,8 +135,8 @@ contract AdversarialTests is Test {
         uint256 spotPrice = Conversions.sqrtPriceX96ToPrice(sqrtPriceX96, 18);
         uint256 purchasePrice = spotPrice + (spotPrice * 25 / 100); // 25% slippage
 
-        IWETH(WMON).deposit{value: amount}();
-        IWETH(WMON).transfer(idoManager, amount);
+        IWETH(WBNB).deposit{value: amount}();
+        IWETH(WBNB).transfer(idoManager, amount);
 
         managerContract.buyTokens(purchasePrice, amount, 0, address(this));
 
@@ -183,11 +183,11 @@ contract AdversarialTests is Test {
     // ============ ADVERSARIAL TEST SCENARIOS ============
 
     /// @notice Test: Normal purchase followed by slide
-    /// Buy 3000 MON worth of tokens which should push price up and trigger slide
+    /// Buy 3000 BNB worth of tokens which should push price up and trigger slide
     function testAdversarial_NormalPurchaseThenSlide() public {
         console.log("\n=== Test: Normal Purchase Then Slide ===");
 
-        uint256 purchaseAmount = 3000 ether; // 3000 MON
+        uint256 purchaseAmount = 3000 ether; // 3000 BNB
 
         uint256 priceBefore = getCurrentPrice();
         uint256 ratioBefore = getLiquidityRatio();
@@ -250,7 +250,7 @@ contract AdversarialTests is Test {
     function testAdversarial_FullCycle_BuySlideSellShift() public {
         console.log("\n=== Test: Full Cycle (Buy -> Slide -> Sell -> Shift) ===");
 
-        // Phase 1: Buy 3000 MON worth
+        // Phase 1: Buy 3000 BNB worth
         console.log("\n--- Phase 1: Initial Purchase ---");
         uint256 purchaseAmount = 3000 ether;
         uint256 tokensBought = buyTokens(purchaseAmount);
@@ -287,7 +287,7 @@ contract AdversarialTests is Test {
     }
 
     /// @notice Test: Huge purchase causing near-max price state
-    /// Buy 30k MON which should push price to extreme levels
+    /// Buy 30k BNB which should push price to extreme levels
     function testAdversarial_HugePurchase_NearMaxPrice() public {
         console.log("\n=== Test: Huge Purchase Near Max Price ===");
 
@@ -300,7 +300,7 @@ contract AdversarialTests is Test {
 
         // Now do the huge purchase
         console.log("\n--- Huge Purchase Phase ---");
-        uint256 hugeAmount = 30000 ether; // 30k MON
+        uint256 hugeAmount = 30000 ether; // 30k BNB
 
         uint256 priceBefore = getCurrentPrice();
         bool wasNearMax = isNearMaxPrice();
@@ -341,8 +341,8 @@ contract AdversarialTests is Test {
     function testAdversarial_ExtremeStateRecovery() public {
         console.log("\n=== Test: Extreme State Recovery ===");
 
-        // Phase 1: Normal purchase (3000 MON)
-        console.log("\n--- Phase 1: Normal Purchase (3000 MON) ---");
+        // Phase 1: Normal purchase (3000 BNB)
+        console.log("\n--- Phase 1: Normal Purchase (3000 BNB) ---");
         uint256 normalAmount = 3000 ether;
         uint256 tokensFromNormal = buyTokens(normalAmount);
         console.log("Tokens from normal purchase:", tokensFromNormal);
@@ -366,8 +366,8 @@ contract AdversarialTests is Test {
         console.log("\n--- Phase 4: Slide After Sell ---");
         attemptSlide();
 
-        // Phase 5: Huge purchase (30k MON)
-        console.log("\n--- Phase 5: Huge Purchase (30k MON) ---");
+        // Phase 5: Huge purchase (30k BNB)
+        console.log("\n--- Phase 5: Huge Purchase (30k BNB) ---");
 
         // Do it in chunks
         uint256 totalHuge = 30000 ether;
@@ -551,7 +551,7 @@ contract AdversarialTests is Test {
         // Do massive consecutive purchases to push price up significantly
         console.log("\n--- Massive Purchase Phase ---");
         uint256 totalPurchased = 0;
-        uint256 chunkSize = 50000 ether; // 50k MON per chunk
+        uint256 chunkSize = 50000 ether; // 50k BNB per chunk
         uint256 maxIterations = 20;
 
         for (uint i = 0; i < maxIterations; i++) {
@@ -574,7 +574,7 @@ contract AdversarialTests is Test {
             totalPurchased += chunkSize;
         }
 
-        console.log("\nTotal purchased:", totalPurchased / 1e18, "MON");
+        console.log("\nTotal purchased:", totalPurchased / 1e18, "BNB");
 
         uint256 finalRatio = getLiquidityRatio();
         uint256 finalPrice = getCurrentPrice();

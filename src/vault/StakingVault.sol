@@ -35,7 +35,7 @@ interface ILendingVault {
     function vaultSelfRepayLoans(uint256 fundsToPull, uint256 start, uint256 limit) external returns (uint256 eligibleCount, uint256 totalRepaid, uint256 nextIndex);
 }
 
-interface INomaDividends {
+interface IOikosDividends {
     function distribute(address rewardToken, uint256 amount) external;
 }
 
@@ -97,7 +97,7 @@ contract StakingVault is BaseVault {
                         dd,
                         protocolFee
                     );
-                    INomaDividends(dd)
+                    IOikosDividends(dd)
                     .distribute(
                         IUniswapV3Pool(addresses.pool).token0(),
                         protocolFee
@@ -143,8 +143,8 @@ contract StakingVault is BaseVault {
         uint256 circulating = IModelHelper(modelHelper())
             .getCirculatingSupply(
                 addresses.pool,
-                address(this), 
-                false
+                address(this),
+                true
             );
 
         toMintEth = IRewardsCalculator(rewardsCalculator())
@@ -164,19 +164,19 @@ contract StakingVault is BaseVault {
         IVault v = IVault(address(this));
         uint256 inflationFeePct = v.getProtocolParameters().inflationFee; // e.g. 5 means 5%
         
-        // vNOMA share set to inflation fee for now
-        uint256 vNomaShare = (toMint * inflationFeePct) / 100;
+        // vOKS share set to inflation fee for now
+        uint256 vOikosShare = (toMint * inflationFeePct) / 100;
 
         address teamMultisig = v.teamMultiSig();
         
-        uint256 baseAfterVnoma = toMint - vNomaShare;
-        uint256 inflation = (baseAfterVnoma * inflationFeePct) / 100;
+        uint256 baseAfterVoikos = toMint - vOikosShare;
+        uint256 inflation = (baseAfterVoikos * inflationFeePct) / 100;
 
         if (inflation == 0) {
-            if (_v.vNOMAContract != address(0)) {
-                IERC20(IUniswapV3Pool(poolAddr).token0()).safeTransfer(_v.vNOMAContract, vNomaShare);
+            if (_v.vOKSContract != address(0)) {
+                IERC20(IUniswapV3Pool(poolAddr).token0()).safeTransfer(_v.vOKSContract, vOikosShare);
             }
-            return (baseAfterVnoma, 0); // all else remains
+            return (baseAfterVoikos, 0); // all else remains
         }
 
         // 1.25% caller fee out of inflation
@@ -207,14 +207,14 @@ contract StakingVault is BaseVault {
         }
 
         // vToken share (or fallback to team)
-        if (vNomaShare > 0) {
+        if (vOikosShare > 0) {
             address vTokenAddr = vToken();
             address recipient = vTokenAddr != address(0) ? vTokenAddr : teamMultisig;
-            _pay(IUniswapV3Pool(poolAddr).token0(), recipient, vNomaShare);
+            _pay(IUniswapV3Pool(poolAddr).token0(), recipient, vOikosShare);
         }
        
         // remain is the base minus inflation 
-        remain = baseAfterVnoma - inflation;
+        remain = baseAfterVoikos - inflation;
     }
 
     function _pay(
@@ -350,12 +350,12 @@ contract StakingVault is BaseVault {
         return _v.stakingEnabled;
     }
 
-    function getVNOMAContract() external view returns (address) {
-        return _v.vNOMAContract;
+    function getVOKSContract() external view returns (address) {
+        return _v.vOKSContract;
     }
 
-    function setvNOMAContract(address _vNOMAContract) external onlyManager() {
-        _v.vNOMAContract = _vNOMAContract;
+    function setvOKSContract(address _vOKSContract) external onlyManager() {
+        _v.vOKSContract = _vOKSContract;
     }
 
     /**
@@ -377,8 +377,8 @@ contract StakingVault is BaseVault {
         selectors[0] = bytes4(keccak256(bytes("mintAndDistributeRewards(address,(address,address,address,address,address,address,address))"))); 
         selectors[1] = bytes4(keccak256(bytes("setStakingContract(address)")));
         selectors[2] = bytes4(keccak256(bytes("stakingEnabled()")));
-        selectors[3] = bytes4(keccak256(bytes("setvNOMAContract(address)")));
-        selectors[4] = bytes4(keccak256(bytes("getVNOMAContract()")));
+        selectors[3] = bytes4(keccak256(bytes("setvOKSContract(address)")));
+        selectors[4] = bytes4(keccak256(bytes("getVOKSContract()")));
         return selectors;
     }
 }

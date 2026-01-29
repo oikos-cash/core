@@ -7,7 +7,7 @@ import {stdJson} from "forge-std/StdJson.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../src/interfaces/IVault.sol";
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
-import {NomaToken} from "../src/token/NomaToken.sol";
+import {OikosToken} from "../src/token/OikosToken.sol";
 import {ModelHelper} from "../src/model/Helper.sol";
 import {BaseVault} from "../src/vault/BaseVault.sol";
 import {Utils} from "../src/libraries/Utils.sol";
@@ -45,7 +45,7 @@ contract ShiftRewardsStakingTest is Test {
     using stdJson for string;
 
     IVault vault;
-    IERC20 token0; // NOMA token
+    IERC20 token0; // OKS token
     IERC20 token1; // WETH
 
     uint256 MAX_INT = type(uint256).max;
@@ -54,23 +54,23 @@ contract ShiftRewardsStakingTest is Test {
     address deployer = vm.envAddress("DEPLOYER");
     bool isMainnet = vm.envOr("DEPLOY_FLAG_MAINNET", false);
 
-    NomaToken private noma;
+    OikosToken private noma;
     ModelHelper private modelHelper;
 
     // Mainnet addresses
-    address constant WMON_MAINNET = 0x3bd359C1119dA7Da1D913D1C4D2B7c461115433A;
+    address constant WBNB_MAINNET = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     // Testnet addresses
-    address constant WMON_TESTNET = 0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701;
+    address constant WBNB_TESTNET = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     // Select based on environment
-    address WMON;
+    address WBNB;
     address payable idoManager;
     address nomaToken;
     address modelHelperContract;
     address vaultAddress;
 
     function setUp() public {
-        // Set WMON based on mainnet/testnet flag
-        WMON = isMainnet ? WMON_MAINNET : WMON_TESTNET;
+        // Set WBNB based on mainnet/testnet flag
+        WBNB = isMainnet ? WBNB_MAINNET : WBNB_TESTNET;
 
         string memory root = vm.projectRoot();
         string memory path = string.concat(root, "/deploy_helper/out/out.json");
@@ -84,7 +84,7 @@ contract ShiftRewardsStakingTest is Test {
         IDOManager managerContract = IDOManager(idoManager);
         require(address(managerContract) != address(0), "Manager contract address is zero");
 
-        noma = NomaToken(nomaToken);
+        noma = OikosToken(nomaToken);
         modelHelper = ModelHelper(modelHelperContract);
         vaultAddress = address(managerContract.vault());
 
@@ -95,7 +95,7 @@ contract ShiftRewardsStakingTest is Test {
         token1 = IERC20(pool.token1());
 
         console.log("Vault address:", vaultAddress);
-        console.log("Token0 (NOMA):", address(token0));
+        console.log("Token0 (OKS):", address(token0));
         console.log("Token1 (WETH):", address(token1));
     }
 
@@ -115,11 +115,11 @@ contract ShiftRewardsStakingTest is Test {
         }
 
         // Record balances before shift
-        uint256 stakingNomaBalanceBefore = token0.balanceOf(stakingContract);
-        uint256 vaultNomaBalanceBefore = token0.balanceOf(vaultAddress);
+        uint256 stakingOikosBalanceBefore = token0.balanceOf(stakingContract);
+        uint256 vaultOikosBalanceBefore = token0.balanceOf(vaultAddress);
 
-        console.log("Staking NOMA balance before shift:", stakingNomaBalanceBefore);
-        console.log("Vault NOMA balance before shift:", vaultNomaBalanceBefore);
+        console.log("Staking OKS balance before shift:", stakingOikosBalanceBefore);
+        console.log("Vault OKS balance before shift:", vaultOikosBalanceBefore);
 
         // Check if shift is needed
         address poolAddr = address(vault.pool());
@@ -131,16 +131,16 @@ contract ShiftRewardsStakingTest is Test {
             vault.shift();
 
             // Record balances after shift
-            uint256 stakingNomaBalanceAfter = token0.balanceOf(stakingContract);
-            uint256 vaultNomaBalanceAfter = token0.balanceOf(vaultAddress);
+            uint256 stakingOikosBalanceAfter = token0.balanceOf(stakingContract);
+            uint256 vaultOikosBalanceAfter = token0.balanceOf(vaultAddress);
 
-            console.log("Staking NOMA balance after shift:", stakingNomaBalanceAfter);
-            console.log("Vault NOMA balance after shift:", vaultNomaBalanceAfter);
+            console.log("Staking OKS balance after shift:", stakingOikosBalanceAfter);
+            console.log("Vault OKS balance after shift:", vaultOikosBalanceAfter);
 
             // Staking contract should have received rewards
-            if (stakingNomaBalanceAfter > stakingNomaBalanceBefore) {
-                console.log("Rewards distributed to staking:", stakingNomaBalanceAfter - stakingNomaBalanceBefore);
-                assertTrue(stakingNomaBalanceAfter > stakingNomaBalanceBefore, "Staking should receive rewards");
+            if (stakingOikosBalanceAfter > stakingOikosBalanceBefore) {
+                console.log("Rewards distributed to staking:", stakingOikosBalanceAfter - stakingOikosBalanceBefore);
+                assertTrue(stakingOikosBalanceAfter > stakingOikosBalanceBefore, "Staking should receive rewards");
             } else {
                 console.log("No rewards minted (might be no excess reserves)");
             }
@@ -221,7 +221,7 @@ contract ShiftRewardsStakingTest is Test {
 
     // ============ GONS TOKEN / REBASING TESTS ============
 
-    /// @notice Test that Gons token (sNOMA) total supply increases after staking rewards
+    /// @notice Test that Gons token (sOKS) total supply increases after staking rewards
     function testGons_TotalSupplyIncreasesWithRewards() public {
         address stakingContract = vault.getStakingContract();
 
@@ -230,8 +230,8 @@ contract ShiftRewardsStakingTest is Test {
             return;
         }
 
-        // Try to get sNOMA (Gons) token address
-        // The staking contract should hold sNOMA tokens
+        // Try to get sOKS (Gons) token address
+        // The staking contract should hold sOKS tokens
         // Note: This depends on how the staking is set up
 
         _doPurchasesToTriggerShiftCondition();
@@ -246,11 +246,11 @@ contract ShiftRewardsStakingTest is Test {
 
             uint256 stakingBalanceAfter = token0.balanceOf(stakingContract);
 
-            console.log("NOMA in staking before:", stakingBalanceBefore);
-            console.log("NOMA in staking after:", stakingBalanceAfter);
+            console.log("OKS in staking before:", stakingBalanceBefore);
+            console.log("OKS in staking after:", stakingBalanceAfter);
 
-            // The staking contract should have received NOMA tokens
-            // These would then be distributed to sNOMA holders via rebase
+            // The staking contract should have received OKS tokens
+            // These would then be distributed to sOKS holders via rebase
             if (stakingBalanceAfter > stakingBalanceBefore) {
                 console.log("Rewards to be distributed via rebase:", stakingBalanceAfter - stakingBalanceBefore);
             }
@@ -293,8 +293,8 @@ contract ShiftRewardsStakingTest is Test {
         uint16 totalTrades = 10;
         uint256 tradeAmount = 20000 ether;
 
-        IWETH(WMON).deposit{value: tradeAmount * totalTrades}();
-        IWETH(WMON).transfer(idoManager, tradeAmount * totalTrades);
+        IWETH(WBNB).deposit{value: tradeAmount * totalTrades}();
+        IWETH(WBNB).transfer(idoManager, tradeAmount * totalTrades);
 
         for (uint i = 0; i < totalTrades; i++) {
             (sqrtPriceX96,,,,,,) = IUniswapV3Pool(poolAddr).slot0();

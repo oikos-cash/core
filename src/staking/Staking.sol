@@ -1,27 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.23;
 
-// ███╗   ██╗ ██████╗ ███╗   ███╗ █████╗                               
-// ████╗  ██║██╔═══██╗████╗ ████║██╔══██╗                              
-// ██╔██╗ ██║██║   ██║██╔████╔██║███████║                              
-// ██║╚██╗██║██║   ██║██║╚██╔╝██║██╔══██║                              
-// ██║ ╚████║╚██████╔╝██║ ╚═╝ ██║██║  ██║                              
-// ╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝                              
-                                                                    
-// ██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗     
-// ██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║     
-// ██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║     
-// ██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗
-// ╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
+//  ██████╗ ██╗██╗  ██╗ ██████╗ ███████╗
+// ██╔═══██╗██║██║ ██╔╝██╔═══██╗██╔════╝
+// ██║   ██║██║█████╔╝ ██║   ██║███████╗
+// ██║   ██║██║██╔═██╗ ██║   ██║╚════██║
+// ╚██████╔╝██║██║  ██╗╚██████╔╝███████║
+//  ╚═════╝ ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝                                 
+                                     
+
 //
-// Author: 0xsufi@noma.money
-// Copyright Noma Protocol 2025/2026
+//                                  
+// Copyright Oikos Protocol 2025/2026
 
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20Recovery} from "../abstract/ERC20Recovery.sol";
-import {IsNomaToken} from "../interfaces/IsNomaToken.sol";
+import {IsOikosToken} from "../interfaces/IsOikosToken.sol";
 import {IVault} from "../interfaces/IVault.sol";
 import {Utils} from "../libraries/Utils.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -30,11 +25,11 @@ import "../errors/Errors.sol";
 
 /**
  * @title Staking
- * @notice A contract for staking NOMA tokens and earning rewards.
+ * @notice A contract for staking OKS tokens and earning rewards.
  */
 contract Staking is ReentrancyGuard, ERC20Recovery {
     using SafeERC20 for IERC20;
-    using SafeERC20 for IsNomaToken;
+    using SafeERC20 for IsOikosToken;
 
     /**
      * @notice Struct representing an epoch.
@@ -49,8 +44,8 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
     }
 
     // State variables
-    IERC20 public NOMA; // The NOMA token contract.
-    IsNomaToken public sNOMA; // The staked NOMA token contract.
+    IERC20 public OKS; // The OKS token contract.
+    IsOikosToken public sOKS; // The staked OKS token contract.
     
     address public authority; // The address with authority over the contract.
     address public vault; // The address of the vault contract.
@@ -61,7 +56,7 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
     
     uint256 public totalRewards; // Total rewards distributed.
     uint256 public totalEpochs; // Total number of epochs.
-    uint256 public totalStaked; // Total amount of NOMA staked.
+    uint256 public totalStaked; // Total amount of OKS staked.
 
     // Mapping to track staked amounts per user
     mapping(address => uint256) private stakedBalances;
@@ -82,20 +77,20 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
 
     /**
      * @notice Constructor to initialize the Staking contract.
-     * @param _noma The address of the NOMA token.
-     * @param _sNoma The address of the staked NOMA token.
+     * @param _oikos The address of the OKS token.
+     * @param _sOikos The address of the staked OKS token.
      * @param _vault The address of the vault contract.
      */
     constructor(    
-        address _noma,
-        address _sNoma,
+        address _oikos,
+        address _sOikos,
         address _vault
     ) {
-        NOMA = IERC20(_noma);
-        sNOMA = IsNomaToken(_sNoma);
+        OKS = IERC20(_oikos);
+        sOKS = IsOikosToken(_sOikos);
         vault = _vault;
         
-        sNOMA.initialize(address(this));
+        sOKS.initialize(address(this));
 
         // Initialize first epoch with distribute 0
         epoch = Epoch({
@@ -110,8 +105,8 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
     }
 
     /**
-    * @notice Allows a user to stake NOMA tokens.
-    * @param _amount The amount of NOMA tokens to stake.
+    * @notice Allows a user to stake OKS tokens.
+    * @param _amount The amount of OKS tokens to stake.
     */
     function stake(uint256 _amount) external nonReentrant {
         if (_amount == 0) {
@@ -130,12 +125,12 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
         // Update the last operation timestamp for the user
         lastOperationTimestamp[msg.sender] = block.timestamp;
         
-        // Transfer NOMA tokens from the user to the staking contract
+        // Transfer OKS tokens from the user to the staking contract
         // [C-02 FIX] Use SafeERC20
-        NOMA.safeTransferFrom(msg.sender, address(this), _amount);
+        OKS.safeTransferFrom(msg.sender, address(this), _amount);
 
-        // Mint rebase-adjusted sNOMA to the staker
-        sNOMA.mint(msg.sender, _amount);
+        // Mint rebase-adjusted sOKS to the staker
+        sOKS.mint(msg.sender, _amount);
         
         // Track the originally staked amount and the epoch number when staked
         stakedBalances[msg.sender] += _amount;
@@ -146,7 +141,7 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
     }
 
     /**
-    * @notice Allows a user to unstake their NOMA tokens.
+    * @notice Allows a user to unstake their OKS tokens.
     */
     function unstake() external nonReentrant {
         if (IVault(vault).stakingEnabled() == false) {
@@ -158,18 +153,18 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
             revert LockInPeriodNotElapsed();
         }
 
-        uint256 balance = Math.min(sNOMA.balanceOf(msg.sender), NOMA.balanceOf(address(this)));
+        uint256 balance = Math.min(sOKS.balanceOf(msg.sender), OKS.balanceOf(address(this)));
 
         if (balance == 0) {
             revert NotEnoughBalance(0);
         }
 
-        if (NOMA.balanceOf(address(this)) < balance) {
+        if (OKS.balanceOf(address(this)) < balance) {
             revert NotEnoughBalance(balance); 
         }
 
-        sNOMA.burn(sNOMA.balanceOf(msg.sender), msg.sender);
-        NOMA.safeTransfer(msg.sender, balance);
+        sOKS.burn(sOKS.balanceOf(msg.sender), msg.sender);
+        OKS.safeTransfer(msg.sender, balance);
 
         totalStaked -= stakedBalances[msg.sender];
         stakedBalances[msg.sender] = 0;
@@ -207,24 +202,24 @@ contract Staking is ReentrancyGuard, ERC20Recovery {
             distribute: 0
         });
 
-        // Update total rewards and rebase sNOMA
-        sNOMA.rebase(_reward);
+        // Update total rewards and rebase sOKS
+        sOKS.rebase(_reward);
         totalRewards += _reward;
 
         emit NotifiedReward(_reward);
     }
     
     function recoverERC20(address token, address to) public onlyVault {
-        if (token == address(NOMA) || token == address(sNOMA)) revert CannotRecoverTokens();
+        if (token == address(OKS) || token == address(sOKS)) revert CannotRecoverTokens();
 
         recoverAllERC20(token, to);
-        sNOMA.recoverERC20(token,to);
+        sOKS.recoverERC20(token,to);
     }
 
     /**
-    * @notice Returns the originally staked amount of NOMA for a user.
+    * @notice Returns the originally staked amount of OKS for a user.
    * @param _user The address of the staker.
-   * @return The originally staked amount of NOMA.
+   * @return The originally staked amount of OKS.
     */
     function stakedBalance(address _user) external view returns (uint256) {
         return stakedBalances[_user];

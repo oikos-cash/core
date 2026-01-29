@@ -14,11 +14,12 @@ import {IModelHelper} from "../interfaces/IModelHelper.sol";
 import {IDeployer} from "../interfaces/IDeployer.sol";
 import {IVault} from "../interfaces/IVault.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { LiquidityDeployer } from "../libraries/LiquidityDeployer.sol";
+import {LiquidityDeployer} from "../libraries/LiquidityDeployer.sol";
+import {TwapOracle} from "../libraries/TwapOracle.sol";                                                                                                       
 
 import {
-    LiquidityPosition, 
-    LiquidityType, 
+    LiquidityPosition,
+    LiquidityType,
     AmountsToMint,
     ShiftParameters,
     ProtocolAddresses,
@@ -27,20 +28,8 @@ import {
     LiquidityInternalPars,
     DeployLiquidityParams
 } from "../types/Types.sol";
-import "../errors/Errors.sol";
 
-/**
- * @title IAdaptiveSupply
- * @notice Interface for the AdaptiveSupply contract.
- */
-interface IAdaptiveSupply {
-    function computeMintAmount(
-        uint256 deltaSupply,
-        uint256 timeElapsed,
-        uint256 spotPrice,
-        uint256 imv
-    ) external pure returns (uint256 mintAmount);
-}
+import "../errors/Errors.sol";
 
 /**
  * @title LiquidityOps
@@ -59,77 +48,91 @@ library LiquidityOps {
     function shift(
         ProtocolAddresses memory addresses,
         LiquidityPosition[3] memory positions
-    ) internal 
+    ) internal
     returns (
         uint256 currentLiquidityRatio,
         LiquidityPosition[3] memory newPositions
     ) {
-        if (positions.length != 3) {
-            revert PositionsLength();
+        // ========== MEV Protection: Rate Limiting ==========
+        (, uint256 lastShiftTime) = IVault(addresses.vault).getLastShiftTime();
+        uint256 cooldown = IVault(addresses.vault).getShiftCooldown();
+        if (block.timestamp < lastShiftTime + cooldown) {
+            revert ShiftRateLimited(lastShiftTime, cooldown);
+        }
+
+        // ========== MEV Protection: Pre-execution TWAP Validation ==========
+        // Check BEFORE burning/minting to prevent sandwich attacks
+        if (_shiftSlideValidationHook(addresses.pool, addresses.vault)) {
+            revert Manipulated();
         }
 
         // Ratio of the anchor's price to market price
         currentLiquidityRatio = IModelHelper(addresses.modelHelper)
         .getLiquidityRatio(addresses.pool, addresses.vault);
-        
-        (
-            uint256 circulatingSupply, 
-            uint256 anchorToken1Balance, 
-            uint256 discoveryToken1Balance, 
-            uint256 discoveryToken0Balance
-        ) = getVaultData(addresses);
 
         if (
-            currentLiquidityRatio <= IVault(addresses.vault).getProtocolParameters().shiftRatio
+            currentLiquidityRatio <= IVault(addresses.vault)
+            .getProtocolParameters().shiftRatio
         ) {
-            
-            if (circulatingSupply > 0) {
-            
+            PreShiftParameters memory params = prepareParameters(
+                addresses,
+                positions
+            );
+
+            if (params.circulatingSupply > 0) {
+
                 (uint160 sqrtRatioX96,,,,,,) = IUniswapV3Pool(addresses.pool).slot0();
                 bool isOverLimit = Conversions.isNearMaxSqrtPrice(sqrtRatioX96);
 
-                (,,, uint256 floorToken1Balance) = IModelHelper(addresses.modelHelper)
-                .getUnderlyingBalances(
-                    addresses.pool, 
-                    addresses.vault, 
-                    LiquidityType.Floor
-                );
-
-                uint256 anchorCapacity = IModelHelper(addresses.modelHelper)
-                .getPositionCapacity(
-                    addresses.pool, 
-                    addresses.vault, 
-                    positions[1],
-                    LiquidityType.Anchor
-                );
-
                 newPositions = preShiftPositions(
-                    PreShiftParameters({
-                        addresses: addresses,
-                        circulatingSupply : circulatingSupply,
-                        anchorCapacity: anchorCapacity,
-                        floorToken1Balance: floorToken1Balance,
-                        anchorToken1Balance: anchorToken1Balance,
-                        discoveryToken1Balance: discoveryToken1Balance,
-                        discoveryToken0Balance: discoveryToken0Balance
-                    }),
+                    params,
                     positions,
                     isOverLimit
                 );
-                
+
                 if (!isOverLimit) {
                     IVault(addresses.vault)
                     .updatePositions(
                         newPositions
-                    ); 
+                    );
                 } else {
+
                     IVault(addresses.vault)
                     .fixInbalance(
                         addresses.pool,
                         sqrtRatioX96,
-                        (circulatingSupply * 90) / 100
+                        1 wei
+                    );
+
+                    currentLiquidityRatio = IModelHelper(addresses.modelHelper)
+                    .getLiquidityRatio(addresses.pool, addresses.vault);
+
+                    if (
+                        currentLiquidityRatio <= IVault(addresses.vault)
+                        .getProtocolParameters().shiftRatio
+                    ) {
+                        (sqrtRatioX96,,,,,,) = IUniswapV3Pool(addresses.pool).slot0();
+
+                        newPositions = preShiftPositions(
+                            params,
+                            positions,
+                            Conversions.isNearMaxSqrtPrice(sqrtRatioX96)
+                        );
+
+                        IVault(addresses.vault)
+                        .updatePositions(
+                            newPositions
+                        );
+                    }
+
+                    IVault(addresses.vault)
+                    .updatePositions(
+                        newPositions
                     );
                 }
+
+                // ========== MEV Protection: Update timestamp after successful shift ==========
+                IVault(addresses.vault).updateShiftTime();
 
                 return (currentLiquidityRatio, newPositions);
             }
@@ -137,6 +140,45 @@ library LiquidityOps {
         } else {
             revert AboveThreshold();
         }
+    }
+
+    function prepareParameters(
+        ProtocolAddresses memory addresses,
+        LiquidityPosition[3] memory positions
+    ) internal view returns (PreShiftParameters memory params) {
+        (
+            uint256 circulatingSupply,
+            uint256 anchorToken1Balance,
+            uint256 discoveryToken1Balance,
+            uint256 discoveryToken0Balance
+        ) = IVault(addresses.vault).getVaultData(addresses);
+
+        (,,, uint256 floorToken1Balance) =
+            IModelHelper(addresses.modelHelper)
+                .getUnderlyingBalances(
+                    addresses.pool,
+                    addresses.vault,
+                    LiquidityType.Floor
+                );
+
+        uint256 anchorCapacity =
+            IModelHelper(addresses.modelHelper)
+                .getPositionCapacity(
+                    addresses.pool,
+                    addresses.vault,
+                    positions[1],
+                    LiquidityType.Anchor
+                );
+
+        params = PreShiftParameters({
+            addresses: addresses,
+            circulatingSupply: circulatingSupply,
+            anchorCapacity: anchorCapacity,
+            floorToken1Balance: floorToken1Balance,
+            anchorToken1Balance: anchorToken1Balance,
+            discoveryToken1Balance: discoveryToken1Balance,
+            discoveryToken0Balance: discoveryToken0Balance
+        });
     }
 
     /**
@@ -152,12 +194,14 @@ library LiquidityOps {
         bool isOverLimit
     ) internal returns (LiquidityPosition[3] memory newPositions) {
 
-        // address deployer = params.addresses.deployer;
         uint256 skimRatio = IVault(params.addresses.vault).getProtocolParameters().skimRatio;
 
+        uint256 floorAllocation = params.floorToken1Balance + (params.discoveryToken1Balance / skimRatio) *
+        (100 - (2 * IVault(params.addresses.vault).getProtocolParameters().skimRatio)) / 100;
+        
         uint256 newFloorPrice = Utils
         .computeNewFloorPrice(
-            params.floorToken1Balance + (params.anchorToken1Balance / skimRatio) + params.discoveryToken1Balance,
+            floorAllocation,
             params.circulatingSupply
         );
 
@@ -195,7 +239,7 @@ library LiquidityOps {
         LiquidityPosition[3] memory newPositions
     ) {
         if (params.positions[0].liquidity > 0) {
-            
+
             if (isOverLimit) {
                 // abort shift
                 newPositions = params.positions;
@@ -204,41 +248,38 @@ library LiquidityOps {
 
             (
                 uint256 feesPosition0Token0,
-                uint256 feesPosition0Token1, 
-                uint256 feesPosition1Token0, 
+                uint256 feesPosition0Token1,
+                uint256 feesPosition1Token0,
                 uint256 feesPosition1Token1
              ) = _calculateFees(addresses.vault, params.pool, params.positions);
 
             IVault(addresses.vault).setFees(
-                feesPosition0Token0, 
+                feesPosition0Token0,
                 feesPosition0Token1
             );
 
             IVault(addresses.vault).setFees(
-                feesPosition1Token0, 
+                feesPosition1Token0,
                 feesPosition1Token1
             );
-            
-            // Collect floor liquidity
-            _collectFees(params.positions, addresses, 0);
 
-            // Collect discovery liquidity
-            _collectFees(params.positions, addresses, 2);
+            // Collect liquidity
+            for (uint8 i = 0; i < params.positions.length; i++) {
+                _collectFees(params.positions, addresses, i);
+            }
 
-            // Collect anchor liquidity
-            _collectFees(params.positions, addresses, 1);
-
-            newPositions = 
+            newPositions =
             _shiftPositions(
                 addresses,
-                params
+                params,
+                isOverLimit
             );
- 
+
         } else {
             revert NoLiquidity();
         }
     }
-    
+
     /**
      * @notice Slides liquidity positions based on the current liquidity ratio.
      * @param addresses Protocol addresses.
@@ -249,8 +290,17 @@ library LiquidityOps {
         ProtocolAddresses memory addresses,
         LiquidityPosition[3] memory positions
     ) internal returns (LiquidityPosition[3] memory newPositions) {
-        if (positions.length != 3) {
-            revert PositionsLength();
+        // ========== MEV Protection: Rate Limiting ==========
+        (, uint256 lastShiftTime) = IVault(addresses.vault).getLastShiftTime();
+        uint256 cooldown = IVault(addresses.vault).getShiftCooldown();
+        if (block.timestamp < lastShiftTime + cooldown) {
+            revert ShiftRateLimited(lastShiftTime, cooldown);
+        }
+
+        // ========== MEV Protection: Pre-execution TWAP Validation ==========
+        // Check BEFORE burning/minting to prevent sandwich attacks
+        if (_shiftSlideValidationHook(addresses.pool, addresses.vault)) {
+            revert Manipulated();
         }
 
         uint256 liquidityRatio = IModelHelper(addresses.modelHelper)
@@ -263,6 +313,13 @@ library LiquidityOps {
         if (liquidityRatio < slideRatio) {
             revert BelowThreshold();
         }
+
+        (,,, uint256 anchorToken1Balance) = IModelHelper(addresses.modelHelper)
+            .getUnderlyingBalances(
+                addresses.pool,
+                address(this),
+                LiquidityType.Anchor
+            );
 
         (
             uint256 feesPosition0Token0,
@@ -289,29 +346,26 @@ library LiquidityOps {
         _collectFees(positions, addresses, 1);
         _collectFees(positions, addresses, 2);
 
-        // Check balance after collecting fees
-        (, uint256 anchorToken1Balance,, ) = getVaultData(addresses);
-
-        if (anchorToken1Balance == 0) {
-            anchorToken1Balance = IERC20Metadata(
-                address(IUniswapV3Pool(addresses.pool).token1())
-            ).balanceOf(address(this));
-        }
-
         if (anchorToken1Balance == 0) {
             revert InvalidBalance();
         }
 
+        uint256 reservedToken1 =
+            (anchorToken1Balance ) * (100 - IVault(addresses.vault).getProtocolParameters().skimRatio) / 100;
+
         newPositions = _slidePositions(
             addresses,
             positions,
-            anchorToken1Balance - feesPosition1Token1
+            anchorToken1Balance - reservedToken1
         );
 
         // restore floor
         newPositions[0] = positions[0];
 
         IVault(addresses.vault).updatePositions(newPositions);
+
+        // ========== MEV Protection: Update timestamp after successful slide ==========
+        IVault(addresses.vault).updateShiftTime();
     }
 
     /**
@@ -322,7 +376,8 @@ library LiquidityOps {
      */
     function _shiftPositions(
         ProtocolAddresses memory addresses,
-        ShiftParameters memory params
+        ShiftParameters memory params,
+        bool isNewDeploy
     ) internal returns (LiquidityPosition[3] memory newPositions) {
 
         uint8 decimals = IERC20Metadata(address(IUniswapV3Pool(params.pool).token0())).decimals();
@@ -330,15 +385,15 @@ library LiquidityOps {
 
         newPositions[0] = LiquidityDeployer
         .shiftFloor(
-            params.pool, 
-            addresses.exchangeHelper, 
+            params.pool,
+            addresses.exchangeHelper,
             params.newFloorPrice,
-            params.floorToken1Balance + (params.anchorToken1Balance / skimRatio) + params.discoveryToken1Balance,
+            params.floorToken1Balance + (params.discoveryToken1Balance / skimRatio),
             params.positions[0]
         );
 
         (uint160 sqrtRatioX96,,,,,,) = IUniswapV3Pool(params.pool).slot0();
-        
+
         int24 upperTick = Utils
         .addBipsToTick(
             TickMath.getTickAtSqrtRatio(sqrtRatioX96),
@@ -346,8 +401,8 @@ library LiquidityOps {
             decimals,
             params.positions[0].tickSpacing
         );
-
-        // Deploy new anchor position
+        
+        // Deploy new anchor position with remaining WBNB
         newPositions[1] = reDeploy(
             ProtocolAddresses({
                 pool: params.pool,
@@ -361,7 +416,7 @@ library LiquidityOps {
             LiquidityInternalPars({
                 lowerTick: newPositions[0].upperTick,
                 upperTick: upperTick,
-                amount1ToDeploy: params.anchorToken1Balance / skimRatio,
+                amount1ToDeploy: 0,
                 liquidityType: LiquidityType.Anchor
             }),
             true
@@ -369,7 +424,7 @@ library LiquidityOps {
 
         upperTick = Utils
         .addBipsToTick(
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96), 
+            TickMath.getTickAtSqrtRatio(sqrtRatioX96),
             IVault(addresses.vault)
             .getProtocolParameters().discoveryBips,
             decimals,
@@ -393,7 +448,9 @@ library LiquidityOps {
                 liquidityType: LiquidityType.Discovery
             }),
             true
-        );       
+        );
+
+        // NOTE: TWAP validation moved to pre-execution in shift() for MEV protection
     }
 
     /**
@@ -413,7 +470,7 @@ library LiquidityOps {
 
         int24 upperTick =  Utils
         .addBipsToTick(
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96), 
+            TickMath.getTickAtSqrtRatio(sqrtRatioX96),
             IVault(addresses.vault).getProtocolParameters().slideAnchorUpperBips,
             IERC20Metadata(address(IUniswapV3Pool(addresses.pool).token0())).decimals(),
             positions[0].tickSpacing
@@ -433,7 +490,7 @@ library LiquidityOps {
 
         upperTick = Utils
         .addBipsToTick(
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96), 
+            TickMath.getTickAtSqrtRatio(sqrtRatioX96),
             IVault(addresses.vault).getProtocolParameters()
             .discoveryBips,
             IERC20Metadata(address(IUniswapV3Pool(addresses.pool).token0())).decimals(),
@@ -457,7 +514,7 @@ library LiquidityOps {
                 liquidityType: LiquidityType.Discovery
             }),
             false
-        );  
+        );
 
         if (newPositions[1].liquidity == 0 || newPositions[2].liquidity == 0) {
             revert NoLiquidity();
@@ -479,39 +536,44 @@ library LiquidityOps {
         if (params.upperTick <= params.lowerTick) {
             revert InvalidTick();
         }
+        uint256 reserved = 0;
+        uint256 totalSupply = IERC20Metadata(
+            IUniswapV3Pool(addresses.pool).token0()
+        ).totalSupply();
+
         uint256 balanceToken0 = 0;
 
         if (isShift) {
-            balanceToken0 = refreshBalance0(addresses);
+            balanceToken0 = IERC20Metadata(IUniswapV3Pool(addresses.pool).token0()).balanceOf(addresses.vault);
         } else {
-        (,, balanceToken0,) = IModelHelper(addresses.modelHelper)
-            .getUnderlyingBalances(
-                addresses.pool, 
-                address(this), 
-                LiquidityType.Discovery
-            );
+            (,, balanceToken0,) = IModelHelper(addresses.modelHelper)
+                .getUnderlyingBalances(
+                    addresses.pool,
+                    address(this),
+                    LiquidityType.Discovery
+                );
         }
 
         if (params.liquidityType == LiquidityType.Discovery) {
-
-            uint256 totalSupply = IERC20Metadata(IUniswapV3Pool(addresses.pool).token0()).totalSupply();        
-            
-            adjustSupply(
-                balanceToken0,
-                IModelHelper(addresses.modelHelper)
-                .getCirculatingSupply(
-                    addresses.pool,
-                    addresses.vault,
-                    false
-                ),
-                totalSupply,
-                isShift,
-                addresses
-            );
+            (bool isNewDeploy, ) = IVault(addresses.vault).getLastShiftTime();
+            if (!isNewDeploy) {
+                (uint256 mintAmount, uint256 sigmoid) = adjustSupply(
+                    balanceToken0,
+                    IModelHelper(addresses.modelHelper)
+                    .getCirculatingSupply(
+                        addresses.pool,
+                        addresses.vault,
+                        true
+                    ),
+                    totalSupply,
+                    isShift,
+                    addresses
+                );
+            }
         }
 
         if (isShift) {
-            balanceToken0 = refreshBalance0(addresses);
+            balanceToken0 = IERC20Metadata(IUniswapV3Pool(addresses.pool).token0()).balanceOf(addresses.vault);
         } else {
             (,, balanceToken0,) = IModelHelper(addresses.modelHelper)
             .getUnderlyingBalances(
@@ -520,14 +582,29 @@ library LiquidityOps {
                 LiquidityType.Anchor
             );
         }
-        if (balanceToken0 == 0) {
-            balanceToken0 = refreshBalance0(addresses);
-        }
 
         uint256 amount0ToDeploy;
+
         if (
             params.liquidityType == LiquidityType.Anchor
-        ) {        
+        ) {
+
+            if (params.amount1ToDeploy == 0) {
+                params.amount1ToDeploy = Uniswap
+                .computeAmount1ForAmount0(
+                    LiquidityPosition({
+                        lowerTick: params.lowerTick,
+                        upperTick: params.upperTick,
+                        liquidity: 0,
+                        price: 0,
+                        tickSpacing: 0,
+                        liquidityType: params.liquidityType
+                    }),
+                    IERC20(address(IUniswapV3Pool(addresses.pool).token0())).balanceOf(addresses.vault) * 
+                    IVault(addresses.vault).getProtocolParameters().reservedBalanceThreshold / 100
+                );
+            }
+
             amount0ToDeploy = Uniswap
             .computeAmount0ForAmount1(
                 LiquidityPosition({
@@ -537,54 +614,59 @@ library LiquidityOps {
                     price: 0,
                     tickSpacing: 0,
                     liquidityType: params.liquidityType
-                }), 
+                }),
                 params.amount1ToDeploy
             );
+
+        } else {
+            amount0ToDeploy = isShift ?
+            (balanceToken0 - reserved) :
+            (totalSupply * IVault(addresses.vault).getProtocolParameters().reservedBalanceThreshold) / 100;
         }
 
         newPosition = LiquidityDeployer
         .deployPosition(
             DeployLiquidityParams({
-                pool: addresses.pool, 
-                receiver: addresses.vault, 
+                pool: addresses.pool,
+                receiver: addresses.vault,
                 bips: 0,
                 lowerTick: params.lowerTick,
                 upperTick: params.upperTick,
-                liquidityType: params.liquidityType, 
+                liquidityType: params.liquidityType,
                 tickSpacing: 60,
                 amounts: AmountsToMint({
-                    amount0: params.liquidityType == LiquidityType.Anchor ? amount0ToDeploy : balanceToken0,
+                    amount0: amount0ToDeploy,
                     amount1: params.amount1ToDeploy
                 })
             })
-        );     
+        );
     }
-    
+
     function adjustSupply(
         uint256 balanceToken0,
         uint256 circulatingSupply,
         uint256 totalSupply,
         bool isShift,
         ProtocolAddresses memory addresses
-    ) internal {
+    ) internal returns (
+        uint256 mintAmount,
+        uint256 sigmoid
+    ) {
         IVault vault = IVault(addresses.vault);
         ProtocolParameters memory params = vault.getProtocolParameters();
 
-        // Optional safety check
         if (params.lowBalanceThresholdFactor >= 100 && params.highBalanceThresholdFactor >= 100) revert InvalidThresholds();
 
-        // Thresholds as percentages of circulating supply
         uint256 lowBalanceThreshold  = (circulatingSupply * params.lowBalanceThresholdFactor)  / 100;
-        uint256 highBalanceThreshold = (circulatingSupply * params.highBalanceThresholdFactor) / 100;
-
-        // Read current price from the pool
         (uint160 sqrtRatioX96,,,,,,) = IUniswapV3Pool(addresses.pool).slot0();
 
-        uint256 mintAmount = computeMintAmount(addresses, totalSupply, sqrtRatioX96);
+        (mintAmount, sigmoid) = Utils
+        .computeMintAmount(
+            addresses,
+            totalSupply,
+            sqrtRatioX96
+        );
 
-        // -------------------------------------------------------------------------
-        // MINT PATH (SHIFT)
-        // -------------------------------------------------------------------------
         if (balanceToken0 < lowBalanceThreshold && isShift) {
             // Fallback: mint a % of circulating supply if computed amount unusable
             if (mintAmount == 0 || mintAmount > totalSupply) {
@@ -593,89 +675,6 @@ library LiquidityOps {
 
             vault.mintTokens(addresses.vault, mintAmount);
         }
-
-        // -------------------------------------------------------------------------
-        // BURN PATH (SLIDE)
-        // -------------------------------------------------------------------------
-        uint256 refreshedBalance0 = refreshBalance0(addresses);
-
-        bool hasExcessBalance =
-            balanceToken0 > highBalanceThreshold ||
-            refreshedBalance0 > lowBalanceThreshold;
-
-        if (hasExcessBalance && !isShift) {
-            uint256 currentBalance0 =
-                balanceToken0 > 0 ? balanceToken0 : refreshedBalance0;
-
-            // backedBalance0 = mintAmount * lowPct / 100
-            uint256 backedBalance0 =
-                (mintAmount * params.lowBalanceThresholdFactor) / 100;
-
-            if (currentBalance0 > backedBalance0) {
-                uint256 burnAmount = currentBalance0 - backedBalance0;
-                vault.burnTokens(burnAmount);
-            }
-        }
-
-    }
-    
-    function refreshBalance0(ProtocolAddresses memory addresses) internal view returns (uint256) {
-        return IERC20Metadata(IUniswapV3Pool(addresses.pool).token0()).balanceOf(addresses.vault);
-    }
-
-    function computeMintAmount(
-        ProtocolAddresses memory addresses,
-        uint256 totalSupply,
-        uint160 sqrtRatioX96
-    ) internal view returns (uint256 mintAmount) {
-        // Mint unbacked supply
-        mintAmount = IAdaptiveSupply(
-            addresses.adaptiveSupplyController
-        ).computeMintAmount(
-            totalSupply,
-            IVault(addresses.vault).getTimeSinceLastMint() > 0 ? 
-            IVault(addresses.vault).getTimeSinceLastMint() : 
-            1,
-            Conversions.sqrtPriceX96ToPrice(
-                sqrtRatioX96,
-                18
-            ),
-            IModelHelper(addresses.modelHelper)
-            .getIntrinsicMinimumValue(addresses.vault)
-        );
-    }
-
-    /**
-     * @notice Retrieves vault data including circulating supply and token balances.
-     * @param addresses Protocol addresses.
-     * @return circulatingSupply The circulating supply of the vault.
-     * @return anchorToken1Balance The balance of token1 in the anchor position.
-     * @return discoveryToken1Balance The balance of token1 in the discovery position.
-     * @return discoveryToken0Balance The balance of token0 in the discovery position.
-     */
-    function getVaultData(ProtocolAddresses memory addresses) internal view returns (uint256, uint256, uint256, uint256) {
-        (,,, uint256 anchorToken1Balance) = IModelHelper(addresses.modelHelper)
-        .getUnderlyingBalances(
-            addresses.pool, 
-            addresses.vault, 
-            LiquidityType.Anchor
-        );
-
-        (,, uint256 discoveryToken0Balance, uint256 discoveryToken1Balance) = IModelHelper(addresses.modelHelper)
-        .getUnderlyingBalances(
-            addresses.pool, 
-            addresses.vault, 
-            LiquidityType.Discovery
-        );
-
-        uint256 circulatingSupply = IModelHelper(addresses.modelHelper)
-        .getCirculatingSupply(
-            addresses.pool,
-            addresses.vault,
-            false
-        );
-        
-        return (circulatingSupply, anchorToken1Balance, discoveryToken1Balance, discoveryToken0Balance);
     }
 
     /**
@@ -684,16 +683,16 @@ library LiquidityOps {
      * @param addresses Protocol addresses.
     */
     function _collectFees(
-        LiquidityPosition[3] memory positions, 
-        ProtocolAddresses memory addresses, 
+        LiquidityPosition[3] memory positions,
+        ProtocolAddresses memory addresses,
         uint8 idx
     ) internal {
         Uniswap.collect(
-            addresses.pool, 
-            addresses.vault, 
-            positions[idx].lowerTick, 
+            addresses.pool,
+            addresses.vault,
+            positions[idx].lowerTick,
             positions[idx].upperTick
-        ); 
+        );
     }
 
     /**
@@ -707,54 +706,55 @@ library LiquidityOps {
      */
     function _calculateFees(
         address vault,
-        address pool, 
+        address pool,
         LiquidityPosition[3] memory positions
     ) internal view returns (
-        uint256 feesPosition0Token0, 
-        uint256 feesPosition0Token1, 
-        uint256 feesPosition1Token0, 
+        uint256 feesPosition0Token0,
+        uint256 feesPosition0Token1,
+        uint256 feesPosition1Token0,
         uint256 feesPosition1Token1
     ) {
-
         (uint160 sqrtRatioX96,,,,,,) = IUniswapV3Pool(pool).slot0();
+        int24 tick = TickMath.getTickAtSqrtRatio(sqrtRatioX96);
 
-        feesPosition0Token0 = Underlying
-        .computeFeesEarned(
-            positions[0], 
-            vault, 
-            pool, 
-            true, 
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96)
-        );
+        // token0 fees
+        feesPosition0Token0 = Underlying.computeFeesEarned(positions[0], vault, pool, true,  tick);
+        feesPosition1Token0 = Underlying.computeFeesEarned(positions[1], vault, pool, true,  tick);
 
-        feesPosition1Token0 = Underlying
-        .computeFeesEarned(
-            positions[1], 
-            vault, 
-            pool, 
-            true, 
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96)
-        );
-
-        feesPosition0Token1 = Underlying
-        .computeFeesEarned(
-            positions[0], 
-            vault, 
-            pool, 
-            false, 
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96)
-        );
-
-        feesPosition1Token1 = Underlying
-        .computeFeesEarned(
-            positions[1], 
-            vault, 
-            pool, 
-            false, 
-            TickMath.getTickAtSqrtRatio(sqrtRatioX96)
-        );
-
-        return (feesPosition0Token0, feesPosition0Token1, feesPosition1Token0, feesPosition1Token1);
+        // token1 fees
+        feesPosition0Token1 = Underlying.computeFeesEarned(positions[0], vault, pool, false, tick);
+        feesPosition1Token1 = Underlying.computeFeesEarned(positions[1], vault, pool, false, tick);
     }
 
+
+    /**
+     * @notice Validates that the pool price is not manipulated using TWAP comparison.
+     * @param poolAddress The Uniswap V3 pool address.
+     * @param vaultAddress The vault address to get TWAP config from.
+     * @return manipulated True if price manipulation is detected.
+     * @dev Uses configurable TWAP period and deviation threshold from vault settings.
+     *      Defaults: 120 seconds (2 min) period, 200 ticks (~2%) max deviation.
+     *      For new pools without enough history, allows operation (low manipulation risk).
+     */
+    function _shiftSlideValidationHook(
+        address poolAddress,
+        address vaultAddress
+    ) internal view
+    returns (
+        bool manipulated
+    ) {
+        // Get configurable TWAP parameters from vault
+        uint32 twapPeriod = IVault(vaultAddress).getTwapPeriod();           // Default: 120 (2 min)
+        uint256 maxDeviationTicks = IVault(vaultAddress).getTwapDeviationTicks(); // Default: 200 (~2%)
+
+        // Check if pool has enough oracle history for TWAP
+        (bool canSupport, , ) = TwapOracle.checkOracleSupport(poolAddress, twapPeriod);
+
+        if (!canSupport) {
+            return true;
+        }
+
+        // Check if spot price deviates too much from TWAP
+        (manipulated, ) = TwapOracle.isSpotManipulated(poolAddress, twapPeriod, maxDeviationTicks);
+    }
 }
